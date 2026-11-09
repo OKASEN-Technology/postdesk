@@ -136,14 +136,19 @@ export default function PostEditor({ config }: { config: Config }) {
     slides: wordPatches.length ? wordPatches : undefined,
   });
   const save = () => run(() => api.updatePost(post.id, edits()));
+  // Back to where the post belongs: its card on the board, else the queue.
+  const home = post.card_id ? `/cards/${post.card_id}` : "/queue";
   const approve = () => run(async () => {
     if (dirty) await api.updatePost(post.id, edits());
     return api.approve(post.id, fromLocalInput(publishAt, tz).toISOString());
-  }, () => navigate("/"));
+  }, () => navigate(home));
 
   return (
     <>
-      <nav className="text-xs"><Link to="/" className="text-moss hover:underline">← Queue</Link></nav>
+      <nav className="flex gap-3 text-xs">
+        {post.card_id && <Link to={home} className="text-moss hover:underline">← Card</Link>}
+        <Link to="/queue" className="text-moss hover:underline">{post.card_id ? "Queue" : "← Queue"}</Link>
+      </nav>
       <div className="mt-2 flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           {editable ? (
@@ -262,7 +267,7 @@ export default function PostEditor({ config }: { config: Config }) {
                   <div className="flex flex-wrap gap-2">
                     <button type="button" disabled={busy || !publishAt} onClick={approve} className={PRIMARY}>Approve &amp; schedule</button>
                     {dirty && <button type="button" disabled={busy} onClick={save} className={SECONDARY}>Save edits</button>}
-                    <button type="button" disabled={busy} onClick={() => run(() => api.action(post.id, "reject"), () => navigate("/"))} className={DANGER}>Reject</button>
+                    <button type="button" disabled={busy} onClick={() => run(() => api.action(post.id, "reject"), () => navigate(home))} className={DANGER}>Reject</button>
                   </div>
                 </>
               )}
@@ -271,7 +276,7 @@ export default function PostEditor({ config }: { config: Config }) {
                   <p className="text-sm text-ink-2">Goes out {fmt(post.publish_at, tz)} · approved by {post.approved_by}. An approved post cannot be edited.</p>
                   <div className="flex flex-wrap gap-2">
                     <button type="button" disabled={busy} onClick={() => run(() => api.action(post.id, "unapprove"))} className={SECONDARY}>Unapprove to edit</button>
-                    <button type="button" disabled={busy} onClick={() => run(() => api.action(post.id, "reject"), () => navigate("/"))} className={DANGER}>Reject</button>
+                    <button type="button" disabled={busy} onClick={() => run(() => api.action(post.id, "reject"), () => navigate(home))} className={DANGER}>Reject</button>
                   </div>
                 </>
               )}
@@ -287,7 +292,7 @@ export default function PostEditor({ config }: { config: Config }) {
               {post.status === "failed" && (
                 <div className="flex flex-wrap gap-2">
                   <button type="button" disabled={busy} onClick={() => run(() => api.action(post.id, "back-to-draft"))} className={SECONDARY}>Back to draft</button>
-                  <button type="button" disabled={busy} onClick={() => run(() => api.action(post.id, "reject"), () => navigate("/"))} className={DANGER}>Reject</button>
+                  <button type="button" disabled={busy} onClick={() => run(() => api.action(post.id, "reject"), () => navigate(home))} className={DANGER}>Reject</button>
                 </div>
               )}
               {(post.status === "published" || post.status === "rejected") && <p className="text-sm text-ink-2">Nothing left to schedule.</p>}

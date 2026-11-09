@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { Link, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { api, type Config } from "./api";
 import Login from "./pages/Login";
+import Board from "./pages/Board";
+import Card from "./pages/Card";
 import Queue from "./pages/Queue";
 import PostEditor from "./pages/PostEditor";
 import NewPost from "./pages/NewPost";
@@ -18,9 +20,10 @@ function Header({ config }: { config: Config | null }) {
   );
   return (
     <header className="border-b border-line bg-paper">
-      <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-3 px-4 py-3">
+      <div className={`mx-auto flex flex-wrap items-center gap-3 px-4 py-3 ${pathname === "/" ? "max-w-[100rem]" : "max-w-6xl"}`}>
         <Link to="/" className="mr-2 text-lg font-semibold tracking-tight text-ink">postdesk</Link>
-        {tab("/", "Queue", pathname === "/" || pathname.startsWith("/posts"))}
+        {tab("/", "Board", pathname === "/" || pathname.startsWith("/cards"))}
+        {tab("/queue", "Queue", pathname === "/queue" || pathname.startsWith("/posts"))}
         {tab("/new", "New post", pathname === "/new")}
         <span className="ml-auto text-xs text-ink-3">
           {config?.handle ? `@${config.handle} · ` : ""}{config?.timezone ?? ""}
@@ -59,10 +62,12 @@ export default function App() {
   return (
     <div className="min-h-screen">
       <Header config={config} />
-      <main className="mx-auto max-w-6xl px-4 py-6">
+      <main className={`mx-auto px-4 py-6 ${location.pathname === "/" ? "max-w-[100rem]" : "max-w-6xl"}`}>
         {config ? (
           <Routes>
-            <Route path="/" element={<Queue config={config} />} />
+            <Route path="/" element={<Board config={config} />} />
+            <Route path="/cards/:id" element={<Card config={config} />} />
+            <Route path="/queue" element={<Queue config={config} />} />
             <Route path="/new" element={<NewPost config={config} />} />
             <Route path="/posts/:id" element={<PostEditor config={config} />} />
             <Route path="*" element={<Navigate to="/" replace />} />
