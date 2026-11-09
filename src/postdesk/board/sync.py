@@ -9,6 +9,8 @@ The queue and the board in step:
   in the queue screens instead of on the board; the card follows, with
   that person as the actor (approving every draft there is the Schedule
   gate, passed by the admin).
+- `measure`: a card Live for 7 days -> Measured, with the numbers in a
+  comment (reach, saves, shares, profile visits).
 - `file_drafts`: a post made by hand in the queue (or with `postdesk
   make`) that has no card gets one in In review, so the editor reads it
   and the board stays the one place to look.
@@ -17,6 +19,7 @@ The queue and the board in step:
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.orm import Session
 
@@ -26,6 +29,9 @@ from postdesk.board.cards import BoardError
 from postdesk.db.models import Card, SocialPost
 
 MAX_FILE_PER_RUN = 5
+MEASURE_AFTER = timedelta(days=7)
+# Without any numbers by then, it is measured anyway (the insights may be off).
+MEASURE_BY = timedelta(days=9)
 SYNCED = {"Making", "In review", "Awaiting approval", "Scheduled", "Approved"}
 
 
@@ -83,7 +89,28 @@ def sync(session: Session, *, log=print) -> dict[str, str]:
         if card.column == "On hold" and sync_action(posts.for_card(session, card.id)) not in ("live", "rejected"):
             continue  # a held card only leaves On hold when it went out after all, or was dropped
         out[str(card.id)] = sync_card(session, card, log=log)
+    for card_id in measure(session, log=log):
+        out[card_id] = "measured"
     return out
+
+
+def measure(session: Session, *, now: datetime | None = None, log=print) -> list[str]:
+    from postdesk.notify.text import measured_line
+
+    now = now or datetime.now(UTC)
+    done = []
+    for card in cards.open_cards(session, {"Live"}):
+        live = [p for p in posts.for_card(session, card.id) if p.status == "published" and p.published_at]
+        if not live:
+            continue
+        age = now - max(p.published_at for p in live)
+        if age < MEASURE_AFTER or (age < MEASURE_BY and not any(p.insights for p in live)):
+            continue
+        cards.comment(session, card, "system", f"A week on: {measured_line(live)}.", commit=False)
+        cards.set_column(session, card, "Measured", actor="publisher", reason="7 days live; insights in")
+        done.append(str(card.id))
+        log(f"card {card.id}: measured")
+    return done
 
 
 def queue_changed(session: Session, card_id: uuid.UUID | None, *, actor: str, log=print) -> None:
@@ -96,7 +123,7 @@ def queue_changed(session: Session, card_id: uuid.UUID | None, *, actor: str, lo
     rows = posts.for_card(session, card.id)
     action = sync_action(rows)
     try:
-        if action == "scheduled" and card.column != "Scheduled" and cards.is_human(actor):
+        if action == "scheduled" and card.column != "Scheduled" and cards.is_human(actor, session):
             when = "; ".join(f"{p.kind} {transitions._when(p.publish_at)}" for p in rows if p.status != "rejected")
             cards.set_column(session, card, "Scheduled", actor=actor, reason=f"approved in the queue: {when}")
         elif action == "wait" and card.column == "Scheduled":

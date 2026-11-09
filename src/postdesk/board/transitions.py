@@ -148,6 +148,22 @@ def unschedule(session: Session, card: Card, *, actor: str) -> Card:
     return card
 
 
+def retry(session: Session, card: Card, *, actor: str) -> Card:
+    """After a failed publish: the failed posts back to draft and the card
+    to Awaiting approval, to be scheduled again. Check the account first: a
+    post that failed late may be live after all."""
+    failed = [p for p in posts.for_card(session, card.id) if p.status == "failed"]
+    if not failed:
+        raise BoardError("nothing on this card failed to publish")
+    cards.check_move(session, card, "Awaiting approval", actor=actor, allowed_from=("On hold",))
+    if not cards.is_human(actor, session):
+        raise BoardError("only the admin sends a failed post back to draft")
+    for p in failed:
+        queue.back_to_draft(session, p.id)
+    set_column(session, card, "Awaiting approval", actor=actor, reason="back to draft after a failed publish")
+    return card
+
+
 def hold(session: Session, card: Card, *, actor: str, note: str | None = None) -> Card:
     why = (note or "").strip() or f"held by {actor}"
     if card.column in cards.DONE:
@@ -197,7 +213,7 @@ def move(session: Session, card: Card, column: str, *, actor: str, note: str | N
         return approve(session, card, actor=actor, note=note)
     if column == "Scheduled":
         return schedule(session, card, actor=actor, when=when)
-    if not cards.is_human(actor):
+    if not cards.is_human(actor, session):
         raise BoardError(f"{actor} moves cards through its own turn, not here")
     if column == "Planned":
         if card.column == "Inbox":
@@ -253,6 +269,9 @@ def brief(session: Session, card: Card, d: dict, *, candidates: list[dict], prob
             card.guidance = d["guidance"].strip()
         plan = dict(card.plan or {})
         plan["images"] = images
+        from postdesk.images import attachment
+
+        attachment.record_credit(session, images)
         if d.get("post"):
             plan["post"] = d["post"]
             card.kind = "story" if d["post"].get("kind") == "story" else "post"
@@ -264,6 +283,12 @@ def brief(session: Session, card: Card, d: dict, *, candidates: list[dict], prob
         cards.comment(session, card, "system", "Not ready to make: this card has no source and no slide plan yet.",
                       commit=False)
     was = card.column
+    from postdesk import notify
+
+    if column == "Brief ready":
+        notify.emit(session, "brief_ready", card, reply=d.get("reply"))
+    elif d.get("reply") or problems:
+        notify.emit(session, "partner_reply", card, reply=d.get("reply"), problems=problems)
     set_column(session, card, column, actor="partner",
                reason="the brief is ready" if column == "Brief ready" else "the partner needs an answer")
     if column == "Brief ready" and was != "Brief ready":

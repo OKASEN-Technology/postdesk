@@ -3,10 +3,11 @@ What a card knows: the source's facts as filed, the images a brief may
 use, the numbers the brief and the copy may contain, and the facts the
 maker gets once the brief is approved.
 
-The images a card may carry, in M2: the source's own hero picture and its
-subjects' pictures (`hero`, `subject-1`, ...), and the images a person
-attached to the thread (`attachment-1`, ...). The partner says which are
-used; the maker gets only those (an approved brief fixes the images).
+The images a card may carry: the source's own hero picture and its
+subjects' pictures (`hero`, `subject-1`, ...), what the partner's image
+lookups found (`found-1`, ..., images/), and the images a person attached
+to the thread (`attachment-1`, ...). The partner says which are used; the
+maker gets only those (an approved brief fixes the images).
 """
 
 from __future__ import annotations
@@ -87,6 +88,8 @@ def image_candidates(session: Session, card: Card) -> list[dict]:
     for i, s in enumerate(f.subjects, 1):
         if s.image:
             add(f"subject-{i}", s.name, s.image, "the source's picture of the subject")
+    for c in (card.plan or {}).get("found") or []:
+        out.append(dict(c))
     for a in cards.attachments(session, card):
         out.append({"key": a["key"], "for": None, "url": a.get("url"), "asset_id": a.get("asset_id"),
                     "credit": None, "licence": None, "what": None, "note": a.get("note"),
@@ -122,8 +125,8 @@ def resolve_images(candidates: list[dict], use: list[str], attached: list[dict])
 
 def facts_for_make(card: Card) -> Facts:
     """The facts with only the images the approved brief uses: a picture it
-    left out is dropped, an attachment it chose takes its place (on the
-    cover, or on the subject it names)."""
+    left out is dropped, an attachment or a find it chose takes its place
+    (on the cover, or on the subject it names)."""
     f = facts_of(card)
     images = card.plan.get("images")
     if images is None:
@@ -135,9 +138,10 @@ def facts_for_make(card: Card) -> Facts:
         if f"subject-{i}" not in used:
             s.image = None
     for img in used.values():
-        if not img["key"].startswith("attachment-"):
+        if not img["key"].startswith(("attachment-", "found-")):
             continue
-        pic = Image(url=img.get("url"), asset_id=img.get("asset_id"), credit=img.get("credit"), what=img.get("what"))
+        pic = Image(url=img.get("url"), asset_id=img.get("asset_id"), credit=img.get("credit"),
+                    licence=img.get("licence"), what=img.get("what"))
         target = next((s for s in f.subjects if s.name == img.get("for")), None)
         if target is not None:
             target.image = pic

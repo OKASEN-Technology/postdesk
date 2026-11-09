@@ -99,6 +99,17 @@ cron command must be a single command, not `sh -c "a; b"`, which is why
 to wherever you can put the file, or bake it into your own image
 (`FROM ghcr.io/...`, `COPY postdesk.toml /app/`).
 
+## Telegram: polling or a webhook
+
+The bot runs inside `postdesk serve` while `TELEGRAM_BOT_TOKEN` is set
+(`--no-telegram` turns it off). By default it asks Telegram for new
+messages (long polling), which needs no public address. When
+`PUBLIC_BASE_URL` is a public `https` address, it registers a webhook
+instead and Telegram posts each update to `/api/telegram/webhook`, with a
+secret header derived from the token that the app checks.
+`[telegram].mode = "polling"` or `"webhook"` forces one. Run one instance
+of the bot per token: two pollers take each other's updates.
+
 ## A system cron instead of the loop
 
 `postdesk serve --no-scheduler` runs only the API and web UI; then run

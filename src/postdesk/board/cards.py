@@ -4,10 +4,16 @@ Cards, their thread and their move log. Every column change goes through
 the two gates and writes a `card_event`:
 
 - **Approved** and **Scheduled** are set only by a person: the admin's web
-  session (`admin`) or the API token (`api`), which is the admin too. An
-  agent, a job, the scout or the publisher asking for either is refused,
-  and the refusal is logged on the card like a move.
+  session (`admin`), the API token (`api`), a signed link from a notifier
+  (`link`, notify/links.py), or the paired Telegram chat
+  (`telegram:<chat id>`, and only while that chat is the paired one). An
+  agent, a job, the scout, the publisher or any other chat asking for
+  either is refused, and the refusal is logged on the card like a move.
 - Everything else may be set by whoever the move function says.
+
+A move that the operator should hear about (a post ready to schedule, one
+live, one held by an agent) leaves a notice in the same transaction
+(notify/).
 
 The move functions themselves, one per move, are in `transitions.py`.
 """
@@ -36,8 +42,10 @@ COLUMNS = (
     "On hold",
 )
 GATES = frozenset({"Approved", "Scheduled"})
-# Who counts as a person: the web session and the API token, both the admin.
-HUMANS = frozenset({"admin", "api"})
+# Who counts as a person: the web session, the API token and a signed link,
+# all the admin; and the paired Telegram chat (`is_human`).
+HUMANS = frozenset({"admin", "api", "link"})
+TELEGRAM = "telegram:"
 # Columns a card is finished in; nothing moves it on from there but the publisher.
 DONE = frozenset({"Live", "Measured"})
 AUTHORS = ("user", "partner", "editor", "maker", "system")
@@ -55,8 +63,33 @@ def now_utc() -> datetime:
     return datetime.now(UTC)
 
 
-def is_human(actor: str) -> bool:
-    return actor in HUMANS
+def is_human(actor: str, session: Session | None = None) -> bool:
+    """A person: the admin, or the Telegram chat paired with the bot right
+    now (which needs the session to look up)."""
+    if actor in HUMANS:
+        return True
+    if actor.startswith(TELEGRAM) and session is not None:
+        from postdesk.telegram import pairing
+
+        linked = pairing.linked(session)
+        return linked is not None and actor == f"{TELEGRAM}{linked['chat_id']}"
+    return False
+
+
+def _notify_move(session: Session, card: Card, to: str, *, actor: str, reason: str | None) -> None:
+    from postdesk import notify
+
+    person = is_human(actor, session)
+    if to == "Awaiting approval" and not person:
+        notify.emit(session, "awaiting_approval", card)
+    elif to == "Scheduled":
+        notify.emit(session, "scheduled", card, actor=actor)
+    elif to == "Live":
+        notify.emit(session, "live", card)
+    elif to == "Measured":
+        notify.emit(session, "measured", card)
+    elif to == "On hold" and not person:
+        notify.emit(session, "on_hold", card, reason=reason, actor=actor)
 
 
 def get(session: Session, card_id: uuid.UUID | str, *, lock: bool = False) -> Card:
@@ -106,6 +139,10 @@ def file_card(
     session.add(card)
     session.flush()
     _event(session, card, column, actor=created_by, reason=reason or "filed", frm="")
+    if column == "Planned" and not created_by.startswith(TELEGRAM):
+        from postdesk import notify
+
+        notify.emit(session, "filed", card)
     session.commit()
     return card
 
@@ -116,7 +153,7 @@ def check_move(session: Session, card: Card, to: str, *, actor: str, allowed_fro
     logged (committed) before it is raised, so it shows on the card."""
     if to not in COLUMNS:
         raise BoardError(f"no column {to!r}; the columns are {', '.join(COLUMNS)}")
-    if to in GATES and not is_human(actor):
+    if to in GATES and not is_human(actor, session):
         _event(session, card, to, actor=actor, refused=True,
                reason=f"refused: only the admin moves a card into {to}" + (f" ({reason})" if reason else ""))
         session.commit()
@@ -137,6 +174,7 @@ def set_column(session: Session, card: Card, to: str, *, actor: str, reason: str
             session.commit()  # what the caller staged with it (a comment) still lands
         return card
     _event(session, card, to, actor=actor, reason=reason)
+    _notify_move(session, card, to, actor=actor, reason=reason)
     card.column = to
     if to != "On hold":
         card.stuck_reason = None

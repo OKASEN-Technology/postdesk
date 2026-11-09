@@ -22,7 +22,7 @@ from postdesk.instagram import graph as ig
 DONE = "_collected"
 SOURCE = "instagram"
 POST_WINDOW = timedelta(days=30)
-FEED_METRICS = "reach,saved,shares,likes,comments,total_interactions,views"
+FEED_METRICS = "reach,saved,shares,likes,comments,total_interactions,views,profile_visits"
 STORY_METRICS = "reach,replies,shares,total_interactions,views"
 ACCOUNT_METRICS = ("reach", "profile_views", "accounts_engaged")
 

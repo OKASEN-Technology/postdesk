@@ -1,6 +1,7 @@
 """
 The tables (docs/roadmap.md): M0's queue and storage, M1's `agent_run`,
-M2's board (`card`, `card_comment`, `card_event`) and its `job` queue.
+M2's board (`card`, `card_comment`, `card_event`) and its `job` queue,
+M3's `notice` outbox and `telegram_message` map.
 """
 
 from __future__ import annotations
@@ -9,6 +10,7 @@ import uuid
 from datetime import date, datetime
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     Date,
     DateTime,
@@ -255,3 +257,44 @@ class Job(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class Notice(Base):
+    """One message to send on one channel (notify/): `telegram`, or a
+    one-way notifier from `[notify]` (`slack`, `webhook`, `email`). Written
+    in the same transaction as the move it reports, sent afterwards by the
+    channel's loop, so a move never waits on a network and a notice is
+    never lost to a crash. `kind`: filed | brief_ready | partner_reply |
+    awaiting_approval | scheduled | live | on_hold | measured |
+    spend_ceiling."""
+
+    __tablename__ = "notice"
+    __table_args__ = (Index("ix_notice_pending", "channel", "sent_at", "created_at"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    channel: Mapped[str] = mapped_column(String, nullable=False)
+    kind: Mapped[str] = mapped_column(String, nullable=False)
+    card_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("card.id", ondelete="CASCADE"),
+                                                      index=True)
+    payload: Mapped[dict] = mapped_column(JSONType, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error: Mapped[str | None] = mapped_column(Text)
+
+
+class TelegramMessage(Base):
+    """A message the bot sent about a card, so a reply to it lands on that
+    card. `purpose`: card (a comment), rethink (the reply is the note),
+    pick_time (the reply is a time to schedule at)."""
+
+    __tablename__ = "telegram_message"
+    __table_args__ = (UniqueConstraint("chat_id", "message_id", name="uq_telegram_message"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    chat_id: Mapped[str] = mapped_column(String, nullable=False)
+    message_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    card_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("card.id", ondelete="CASCADE"),
+                                                      index=True)
+    purpose: Mapped[str] = mapped_column(String, nullable=False, default="card")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

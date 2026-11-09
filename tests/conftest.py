@@ -24,18 +24,22 @@ _NOWHERE = str(Path(__file__).parent / "__no_such_file__")
 os.environ["POSTDESK_ENV_FILE"] = _NOWHERE
 os.environ["POSTDESK_CONFIG"] = _NOWHERE
 
+import copy
+
 import httpx
 import pytest
+from pydantic import BaseModel
 from sqlalchemy import text
 
+from postdesk import config as config_mod
 from postdesk.config import config, settings
 from postdesk.db import migrate
 from postdesk.db import session as db_session
 
 TEST_DB = os.environ.get("POSTDESK_TEST_DATABASE_URL",
                          "postgresql+psycopg://postgres:postgres@localhost:5432/postdesk_test")
-TABLES = ("job", "card_event", "card_comment", "social_post", "card", "content_asset", "metric", "setting",
-          "image_permission", "agent_run")
+TABLES = ("notice", "telegram_message", "job", "card_event", "card_comment", "social_post", "card", "content_asset",
+          "metric", "setting", "image_permission", "agent_run")
 
 
 def pytest_configure(config):
@@ -99,9 +103,29 @@ def cfg(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(settings, "instagram_user_id", None)
     monkeypatch.setattr(settings, "meta_app_id", None)
     monkeypatch.setattr(settings, "meta_app_secret", None)
+    monkeypatch.setattr(config.voice, "text", None)
+    monkeypatch.setattr(config.images, "sources", ["page", "wikimedia", "business_discovery", "attachment"])
+    monkeypatch.setattr(config.llm, "monthly_usd", 30)
+    monkeypatch.setattr(config.telegram, "digest_at", "08:00")
+    monkeypatch.setattr(config.telegram, "mode", "auto")
+    monkeypatch.setattr(config, "notify", {})
+    for k in ("telegram_bot_token", "slack_webhook_url", "notify_webhook_url", "smtp_host", "smtp_user",
+              "smtp_password", "smtp_from", "resend_api_key"):
+        monkeypatch.setattr(settings, k, None)
     from postdesk.instagram import publish
 
     monkeypatch.setattr(publish, "POLL_INTERVAL_S", 0)
+    # The settings screen's overrides change the config in place: put it back.
+    saved = {k: copy.deepcopy(getattr(config, k)) for k in config_mod.EDITABLE}
+    yield
+    for k, v in saved.items():
+        cur = getattr(config, k)
+        if isinstance(v, BaseModel) and type(cur) is type(v):
+            for f in type(v).model_fields:
+                setattr(cur, f, getattr(v, f))
+        else:
+            setattr(config, k, v)
+    config_mod._applied.clear()
 
 
 class FakeGraph:

@@ -280,3 +280,58 @@ class SourceOut(BaseModel):
     key: str
     type: str
     options: dict
+
+
+# ---------------------------------------------------------------- settings (M3)
+
+
+class TelegramLink(BaseModel):
+    code: str
+
+
+class PermissionIn(BaseModel):
+    holder: str
+    holder_kind: Literal["person", "organisation", "photographer", "other"] = "person"
+    instagram: str | None = None
+    domain: str | None = None
+    subject: str | None = None
+    scope: str
+    credit: str
+    tag: str | None = None
+    evidence: str
+    expires_on: str | None = None  # YYYY-MM-DD
+
+
+class PermissionOut(BaseModel):
+    id: str
+    holder: str
+    holder_kind: str
+    instagram: str | None
+    domain: str | None
+    subject: str | None
+    scope: str
+    credit: str
+    tag: str | None
+    evidence: str
+    granted_on: str
+    expires_on: str | None
+    revoked_at: datetime | None
+    recorded_by: str
+    active: bool
+
+
+class LookupIn(BaseModel):
+    source: Literal["page", "wikimedia", "business_discovery"]
+    subject: str = "hero"
+    query: str = ""
+
+
+class StatusOut(BaseModel):
+    """What the header shows on every page: are the agents running."""
+
+    paused: dict | None
+    month_usd: float
+    ceiling_usd: float
+    over: bool
+    stopped: str | None
+    telegram: Literal["off", "unpaired", "paired"]

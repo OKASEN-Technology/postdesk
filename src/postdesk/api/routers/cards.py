@@ -18,7 +18,6 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from postdesk import instagram as ig
 from postdesk import jobs, llm, queue, storage
 from postdesk.api.auth import require_auth
 from postdesk.api.routers.posts import item as post_item
@@ -38,14 +37,12 @@ from postdesk.api.schemas import (
     ScanOut,
     SourceOut,
 )
-from postdesk.board import cards, posts, scout, transitions
+from postdesk.board import actions, cards, posts, scout, transitions
 from postdesk.board.cards import BoardError, GateRefused
 from postdesk.config import config
 from postdesk.db.models import AgentRun, Card, Job
 from postdesk.db.session import get_session
 from postdesk.sources import SourceError
-from postdesk.sources.manual import facts_from
-from postdesk.sources.url import UrlSource
 
 router = APIRouter(prefix="/api", tags=["board"], dependencies=[Depends(require_auth)])
 
@@ -158,33 +155,12 @@ def list_cards(column: str | None = None, closed: bool = False, session: Session
     return [_row(session, c, busy) for c in rows]
 
 
-def _file_from_form(session: Session, *, title: str, text: str, link: str | None, column: str, kind: str,
-                    template: str | None, actor: str) -> Card:
-    if link and not text.strip():
-        f = UrlSource(template=template or "article").facts(f"url:{link}")
-        ref = f.ref
-    else:
-        ref = f"manual:{uuid.uuid4()}"
-        f = facts_from(title, text or title, link=link, ref=ref)
-    if template:
-        f.template = template
-    fp = scout.fingerprint("url", ref) if ref.startswith("url:") else None
-    if fp and cards.by_fingerprint(session, fp):
-        raise BoardError(f"there is already a card for {link}")
-    card = cards.file_card(session, title=title.strip() or f.title, created_by=actor, column=column, kind=kind,
-                           body_md=text.strip() or f.summary, source_ref=ref, fingerprint=fp, facts=f.to_json(),
-                           plan={"template": f.template} if f.template else {}, reason="filed by the admin")
-    if column == "Planned":
-        jobs.enqueue(session, "partner", card.id, {"reason": "the admin just filed this card: write its brief"})
-    return card
-
-
 @router.post("/cards", response_model=CardDetail)
 def create_card(body: CardCreate, actor: str = Depends(require_auth), session: Session = Depends(get_session)
                 ) -> CardDetail:
     if not body.title.strip() and not body.link:
         raise HTTPException(status_code=400, detail="a title or a link is required")
-    card = _guard(_file_from_form, session, title=body.title, text=body.body_md, link=body.link, column=body.column,
+    card = _guard(actions.file_post, session, title=body.title, text=body.body_md, link=body.link, column=body.column,
                   kind=body.kind, template="story-only" if body.kind == "story" else None, actor=actor)
     return detail(session, card)
 
@@ -216,9 +192,7 @@ def add_comment(card_id: uuid.UUID, body: CommentIn, session: Session = Depends(
     """Your comment; while the card is in Planned or Brief ready the partner
     answers it."""
     card = _card(session, card_id)
-    cards.comment(session, card, "user", body.body_md)
-    if card.column in transitions.PARTNER_COLUMNS and card.closed_at is None:
-        jobs.enqueue(session, "partner", card.id, {"reason": "the admin commented: answer them"})
+    _guard(actions.comment, session, card, body.body_md)
     return detail(session, card)
 
 
@@ -229,25 +203,8 @@ async def add_attachment(card_id: uuid.UUID, file: UploadFile = File(...), note:
     (its credit). It is stored with that note as its provenance."""
     card = _card(session, card_id)
     data = await file.read()
-    if not data:
-        raise HTTPException(status_code=400, detail="empty file")
-    try:
-        jpeg, _ = ig.to_jpeg_bytes(data)
-    except OSError as e:
-        raise HTTPException(status_code=400, detail=f"not an image: {e}") from e
-    try:
-        asset = storage.store_asset(
-            session, data=jpeg, filename=(file.filename or "attachment").rsplit(".", 1)[0] + ".jpg",
-            content_type="image/jpeg", uploaded_by=actor,
-            provenance={"source": "attachment", "card_id": str(card.id), "note": note.strip() or None,
-                        "credit": None, "uploaded_by": actor, "generated": False})
-    except storage.AssetRejected as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-    att = {"asset_id": str(asset.id), "url": storage.asset_url(asset.id), "filename": file.filename,
-           "note": note.strip() or None}
-    cards.comment(session, card, "user", note.strip() or "An image for this post.", attachments=[att])
-    if card.column in transitions.PARTNER_COLUMNS and card.closed_at is None:
-        jobs.enqueue(session, "partner", card.id, {"reason": "the admin attached an image: judge it"})
+    _guard(actions.attach_image, session, card, data, filename=file.filename or "attachment", note=note,
+           actor=actor)
     return detail(session, card)
 
 
@@ -319,7 +276,7 @@ def manual_source(body: ManualSource, actor: str = Depends(require_auth), sessio
         raise HTTPException(status_code=400, detail="a title and text, or a link, is required")
     if not body.link and not body.text.strip():
         raise HTTPException(status_code=400, detail="paste some text, or give a link")
-    card = _guard(_file_from_form, session, title=body.title, text=body.text, link=body.link, column="Planned",
+    card = _guard(actions.file_post, session, title=body.title, text=body.text, link=body.link, column="Planned",
                   kind="story" if body.template == "story-only" else "post", template=body.template, actor=actor)
     return detail(session, card)
 

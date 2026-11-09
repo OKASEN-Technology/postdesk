@@ -83,6 +83,49 @@ export interface Runs { runs: Run[]; month_usd: number; ceiling_usd: number }
 export interface Source { key: string; type: string; options: Record<string, unknown> }
 export interface Scan { filed: string[]; seen: number; deferred: number; errors: string[] }
 
+// ---------------------------------------------------------------- settings
+
+export interface ModelChoice { model: string; effort: string }
+export interface SettingsValues {
+  account: { handle: string; site: string | null; timezone: string; audience: string | null };
+  schedule: {
+    feed_slot: string; story_slot: string; max_feed_per_day: number; max_story_per_day: number; min_lead_hours: number;
+    publisher_hours: [string, string];
+  };
+  voice: { text: string | null; hashtags: string[]; max_hashtags: number; retired_phrases: string[]; file: string; from_file: boolean };
+  theme: { name: string };
+  sources: Record<string, Record<string, unknown>>;
+  images: { sources: string[] };
+  llm: { partner: ModelChoice; editor: ModelChoice; maker: ModelChoice; pick: ModelChoice; monthly_usd: number };
+  telegram: { digest_at: string; mode: string };
+}
+export type Section = keyof SettingsValues;
+export interface Linked { chat_id: string; title?: string | null; by?: string; at?: string }
+export interface TelegramState { configured: boolean; linked: Linked | null; mode: string | null }
+export interface Notifier { name: string; on: boolean; ready: boolean; events: string[] }
+export interface Paused { by: string; at: string }
+export interface SettingsData {
+  values: SettingsValues;
+  /** Sections the screen has changed: the keys changed, or true for a whole table. */
+  overridden: Partial<Record<Section, string[] | true>>;
+  config_path: string | null;
+  choices: { models: string[]; efforts: string[]; image_sources: string[]; source_types: string[]; templates: string[] };
+  telegram: TelegramState;
+  spend: { month_usd: number; ceiling_usd: number; over: boolean };
+  paused: Paused | null;
+  notifiers: Notifier[];
+}
+export interface AgentStatus {
+  paused: Paused | null; month_usd: number; ceiling_usd: number; over: boolean; stopped: string | null;
+  telegram: "off" | "unpaired" | "paired";
+}
+export interface Permission {
+  id: string; holder: string; holder_kind: string; instagram: string | null; domain: string | null; subject: string | null;
+  scope: string; credit: string; tag: string | null; evidence: string; granted_on: string; expires_on: string | null;
+  revoked_at: string | null; recorded_by: string; active: boolean;
+}
+export type PermissionIn = Omit<Permission, "id" | "granted_on" | "revoked_at" | "recorded_by" | "active">;
+
 export class ApiError extends Error {
   constructor(public status: number, message: string) { super(message); }
 }
@@ -139,6 +182,18 @@ export const api = {
   runs: () => call<Runs>("/api/runs?limit=50"),
   sources: () => call<Source[]>("/api/sources"),
   scan: (key: string) => call<Scan>(`/api/sources/${encodeURIComponent(key)}/scan`, json("POST")),
+  settings: () => call<SettingsData>("/api/settings"),
+  saveSettings: (patch: Partial<Record<Section, unknown>>) => call<SettingsData>("/api/settings", json("PUT", patch)),
+  status: () => call<AgentStatus>("/api/status"),
+  pause: () => call<AgentStatus>("/api/agents/pause", json("POST")),
+  resume: () => call<AgentStatus>("/api/agents/resume", json("POST")),
+  telegramLink: (code: string) => call<TelegramState>("/api/telegram/link", json("POST", { code })),
+  telegramUnlink: () => call<TelegramState>("/api/telegram/unlink", json("POST")),
+  telegramTest: () => call<{ ok: boolean }>("/api/telegram/test", json("POST")),
+  notifyTest: (name: string) => call<{ ok: boolean }>(`/api/notify/${name}/test`, json("POST")),
+  permissions: (revoked = false) => call<Permission[]>(`/api/permissions${revoked ? "?revoked=true" : ""}`),
+  addPermission: (body: PermissionIn) => call<Permission>("/api/permissions", json("POST", body)),
+  revokePermission: (id: string) => call<Permission>(`/api/permissions/${id}`, json("DELETE")),
   upload: (file: File, credit: string) => {
     const form = new FormData();
     form.append("file", file);

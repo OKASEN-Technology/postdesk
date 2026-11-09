@@ -84,7 +84,10 @@ class MakerError(RuntimeError):
 
 
 def voice_text() -> str:
-    """The voice file, whole. Relative to postdesk.toml when there is one."""
+    """The voice as typed on the settings screen, else the voice file,
+    whole (relative to postdesk.toml when there is one)."""
+    if config.voice.text and config.voice.text.strip():
+        return config.voice.text.strip()
     p = Path(config.voice.file)
     if not p.is_absolute() and config.path:
         p = config.path.parent / p

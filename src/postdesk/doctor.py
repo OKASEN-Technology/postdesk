@@ -175,12 +175,52 @@ def _tiny_jpeg() -> bytes:
 TEST_JPEG = _tiny_jpeg()
 
 
-def run(*, graph: ig.Graph | None = None, renderer: Renderer | None = None) -> list[Check]:
+def check_spend() -> Check:
+    """This month's agent spend against `[llm].monthly_usd`."""
+    from postdesk import control, store
+
+    with SessionLocal() as session:
+        store.refresh_config(session)
+        s = control.spend(session)
+        paused = control.paused(session)
+    detail = s.line() + (f"; the agents are paused (by {paused.get('by')})" if paused else "")
+    if s.over:
+        return Check("Spend", True, detail + "; the ceiling is reached, so the agents have stopped",
+                     "Raise [llm].monthly_usd (or the ceiling on the settings page), or wait for the month to turn.",
+                     warn=True)
+    return Check("Spend", True, detail)
+
+
+def check_telegram(bot=None) -> Check:
+    """The bot token answers, and a chat is paired."""
+    from postdesk.telegram import pairing
+    from postdesk.telegram.api import Bot, TelegramError
+
+    if not settings.telegram_bot_token:
+        return Check("Telegram", False, "TELEGRAM_BOT_TOKEN is empty",
+                     "Make a bot with @BotFather (/newbot), put its token in .env and restart. postdesk works "
+                     "without it, from the web UI only.", warn=True)
+    try:
+        me = (bot or Bot()).get_me()
+    except TelegramError as e:
+        return Check("Telegram", False, str(e), "Check TELEGRAM_BOT_TOKEN against what @BotFather gave you.")
+    with SessionLocal() as session:
+        linked = pairing.linked(session)
+    if linked is None:
+        return Check("Telegram", True, f"@{me.get('username')} answers; no chat is paired",
+                     f"Send /start to @{me.get('username')}, then paste the code into Settings -> Telegram (or "
+                     "`postdesk telegram link <code>`).", warn=True)
+    return Check("Telegram", True, f"@{me.get('username')}, paired with {linked.get('title') or linked['chat_id']}")
+
+
+def run(*, graph: ig.Graph | None = None, renderer: Renderer | None = None, bot=None) -> list[Check]:
     checks = [check_claude_key(), check_config(), check_database()]
     if checks[-1].ok:
         checks.append(check_migrations())
         if checks[-1].ok:
             checks.append(check_instagram(graph))
             checks.append(check_storage())
+            checks.append(check_telegram(bot))
+            checks.append(check_spend())
     checks.append(check_renderer(renderer))
     return checks

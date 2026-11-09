@@ -10,17 +10,23 @@ Two files configure postdesk (README "Make it yours"):
 Both are module-level singletons (`settings`, `config`) so the rest of the
 package reads them without passing them around; tests set attributes on
 them. `reload()` re-reads both after `postdesk init` writes them.
+
+The settings screen edits a few `postdesk.toml` keys (`EDITABLE`) without
+touching the file: its edits are kept in the `setting` table and laid over
+the file's values by `apply_overrides` (store.refresh_config). Secrets are
+never among them.
 """
 
 from __future__ import annotations
 
+import copy
 import os
 import tomllib
 from datetime import time, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, PrivateAttr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -63,7 +69,15 @@ class Settings(BaseSettings):
     # Where postdesk.toml is. Default: the working directory.
     postdesk_config: Path = Path("postdesk.toml")
 
+    # One-way notifiers ([notify] in postdesk.toml says which are on).
     slack_webhook_url: str | None = None
+    notify_webhook_url: str | None = None
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_user: str | None = None
+    smtp_password: str | None = None
+    smtp_from: str | None = None
+    resend_api_key: str | None = None
 
     @field_validator("*", mode="before")
     @classmethod
@@ -156,6 +170,9 @@ class Schedule(BaseModel):
 
 class Voice(BaseModel):
     file: str = "voice.md"
+    # The voice as typed on the settings screen; when set it is used
+    # instead of the file.
+    text: str | None = None
     hashtags: list[str] = []
     max_hashtags: int = Field(5, ge=0)
     retired_phrases: list[str] = []
@@ -214,11 +231,35 @@ class LLM(BaseModel):
     partner: Model = Model(model="claude-opus-5-5")
     editor: Model = Model(model="claude-opus-5-5")
     maker: Model = Model(model="claude-sonnet-5-5", effort="low")
-    monthly_usd: float = 30
+    # Small choices: which of an account's posts shows the subject (images/).
+    pick: Model = Model(model="claude-haiku-5-5", effort="low")
+    monthly_usd: float = Field(30, ge=0)
 
 
 class Telegram(BaseModel):
-    digest_at: str = "08:00"
+    """The bot (telegram/). The chat is paired with /start, not set here."""
+
+    digest_at: str = "08:00"  # local; the daily digest
+    # auto: a webhook when PUBLIC_BASE_URL is a public https address, else
+    # long polling (no public URL needed). Or force one: polling | webhook.
+    mode: str = "auto"
+
+    @field_validator("digest_at")
+    @classmethod
+    def _valid_time(cls, v: str) -> str:
+        _parse_hhmm(v)
+        return v
+
+    @field_validator("mode")
+    @classmethod
+    def _mode(cls, v: str) -> str:
+        if v not in ("auto", "polling", "webhook"):
+            raise ValueError("mode is auto, polling or webhook")
+        return v
+
+    @property
+    def digest_time(self) -> time:
+        return _parse_hhmm(self.digest_at)
 
 
 class Config(BaseModel):
@@ -239,6 +280,8 @@ class Config(BaseModel):
     notify: dict[str, dict] = {}
     # Where it came from; None when no file was found and defaults are in use.
     path: Path | None = None
+    # The file's own values, before the settings screen's overrides.
+    _data: dict = PrivateAttr(default_factory=dict)
 
 
 def load_config(path: Path | None = None) -> Config:
@@ -252,6 +295,7 @@ def load_config(path: Path | None = None) -> Config:
         data = tomllib.load(f)
     cfg = Config.model_validate(data)
     cfg.path = p.resolve()
+    cfg._data = data
     return cfg
 
 
@@ -269,3 +313,78 @@ def reload() -> None:
     new = load_config()
     for k, v in new.__dict__.items():
         setattr(config, k, v)
+    config._data = new._data
+    _applied.clear()
+
+
+# ---------------------------------------------------------------- overrides
+
+# What the settings screen may change: section -> keys (None: the whole
+# table). Everything else stays in the file.
+EDITABLE: dict[str, tuple[str, ...] | None] = {
+    "account": ("handle", "site", "timezone", "audience"),
+    "schedule": ("feed_slot", "story_slot", "max_feed_per_day", "max_story_per_day", "min_lead_hours",
+                 "publisher_hours"),
+    "voice": ("text", "hashtags", "max_hashtags", "retired_phrases"),
+    "theme": ("name",),
+    "sources": None,
+    "images": ("sources",),
+    "llm": ("partner", "editor", "maker", "pick", "monthly_usd"),
+    "telegram": ("digest_at",),
+}
+# The overrides in force (what `apply_overrides` last laid over the file).
+_applied: dict = {}
+
+
+def _merge(base: dict, over: dict) -> dict:
+    out = copy.deepcopy(base)
+    for k, v in over.items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict) and k != "sources":
+            out[k] = _merge(out[k], v)
+        else:
+            out[k] = copy.deepcopy(v)
+    return out
+
+
+def check_overrides(overrides: dict) -> Config:
+    """The configuration `overrides` would give, validated. Raises
+    ValueError on a key the screen may not change or a bad value."""
+    for section, keys in overrides.items():
+        if section not in EDITABLE:
+            raise ValueError(f"[{section}] is not editable here; change it in postdesk.toml")
+        if keys is None:
+            continue
+        if not isinstance(keys, dict):
+            raise ValueError(f"[{section}] must be a table")
+        allowed = EDITABLE[section]
+        bad = [k for k in keys if allowed is not None and k not in allowed]
+        if bad:
+            raise ValueError(f"[{section}] {', '.join(bad)} is not editable here; change it in postdesk.toml")
+    return Config.model_validate(_merge(config._data, {k: v for k, v in overrides.items() if v is not None}))
+
+
+def apply_overrides(overrides: dict) -> None:
+    """Lay `overrides` ({section: {key: value}}) over the file's values, in
+    place. Only the keys named now or last time are touched, so a key the
+    screen never edited keeps whatever it has."""
+    merged = check_overrides(overrides)
+    touched: dict[str, set[str] | None] = {}
+    for src in (_applied, overrides):
+        for section, keys in src.items():
+            if EDITABLE.get(section) is None or not isinstance(keys, dict):
+                touched[section] = None
+            elif touched.get(section, set()) is not None:
+                touched[section] = touched.get(section, set()) | set(keys)
+    for section, keys in touched.items():
+        if keys is None:
+            setattr(config, section, copy.deepcopy(getattr(merged, section)))
+            continue
+        target, fresh = getattr(config, section), getattr(merged, section)
+        for k in keys:
+            setattr(target, k, copy.deepcopy(getattr(fresh, k)))
+    _applied.clear()
+    _applied.update(copy.deepcopy(overrides))
+
+
+def applied_overrides() -> dict:
+    return copy.deepcopy(_applied)

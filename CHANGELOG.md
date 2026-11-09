@@ -2,6 +2,60 @@
 
 ## Unreleased
 
+### M3, Telegram, images and settings
+
+- **The Telegram bot.** Pair a chat with `/start` and the code it gives
+  (in Settings, or `postdesk telegram link <code>`); from then on the bot
+  answers that chat only and tells any other it is private. It sends each
+  brief with its picture, the picture's licence and **Approve**,
+  **Rethink**, **Hold**; each finished post with its slides, caption, alt
+  text, the editor's checks and **Schedule for ...**, **Pick a time**,
+  **Rethink**, **Hold**; a held card with what can be done about it; the
+  link when it goes live and the numbers a week on; and a daily digest at
+  `[telegram].digest_at`. Reply to any of its messages to talk to the
+  partner about that card, or send a photo in reply, with its credit, to
+  offer a picture. Commands: `/new`, `/board`, `/queue`, `/status`,
+  `/go`, `/rethink`, `/schedule [time]`, `/unschedule`, `/hold`, `/drop`,
+  `/pause`, `/resume`, `/help`. Long polling by default (no public address
+  needed); a webhook when `PUBLIC_BASE_URL` is public https. Messages
+  longer than Telegram's 4,096 characters are split at paragraphs.
+- **The gates hold in the chat too.** The bot acts as `telegram:<chat>`,
+  through the same moves as the board, and the gates accept that actor
+  only while it is the paired chat.
+- **Image sources** (`[images].sources`): `page` (the source page's own
+  picture, credited to the site), `wikimedia` (public domain, CC0 and CC
+  BY only), `business_discovery` (the subject's own Instagram account
+  through the Graph API; a small model picks the post that shows them; a
+  post on someone else's account only if its caption names the subject)
+  and `attachment`. The partner asks for lookups and chooses on its next
+  turn. Each picture is stored with its source, page, licence, author and
+  credit. `postdesk permission add | list | revoke` (and Settings) put a
+  rights holder's yes on file; their pictures then carry it.
+  [docs/images.md](docs/images.md).
+- **One-way notifiers** (`[notify]`): Slack, a signed JSON webhook, and
+  email (SMTP or Resend), for every event or the ones you list. Approve
+  and Schedule come as signed links that expire in 48 hours and ask once
+  more before acting. [docs/notify.md](docs/notify.md).
+- **Settings** in the web UI: Telegram pairing, the agents' pause and the
+  month's spend, the models, the notifiers with a test button, the
+  account, the schedule, the voice, the image sources and theme, the
+  scout's sources, and the image permissions. Edits are kept in the
+  database over `postdesk.toml` and apply at once; each section can go
+  back to the file's value.
+- **The spend ceiling stops, it does not hold.** At `[llm].monthly_usd`
+  no agent starts; their jobs wait, every channel is told once, and every
+  web page says so. Raising the ceiling starts them again. `/status`,
+  the digest and `postdesk doctor` show the month's spend. `/pause` and
+  `/resume` (and Pause in Settings) stop the scout and the agents by hand.
+- **Measured.** A week after a post goes live, its card moves to Measured
+  with its reach, saves, shares and profile visits.
+- `postdesk doctor` checks the bot and the spend; `postdesk serve
+  --no-telegram`; `[llm].pick`; `[telegram].mode`.
+- **API:** `GET/PUT /api/settings`, `GET /api/status`,
+  `POST /api/agents/pause | resume`, `POST /api/telegram/link | unlink |
+  test`, `POST /api/telegram/webhook`, `POST /api/notify/{name}/test`,
+  `GET/POST/DELETE /api/permissions`, and `/act/<token>` for the links.
+
 ### M2, the board, the planner and the editor
 
 - **The board.** Each post is a card that moves through Inbox, Planned,

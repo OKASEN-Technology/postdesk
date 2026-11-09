@@ -48,7 +48,9 @@ web_search = true
 max_searches = 5           # per turn; each costs a cent
 
 [images]
-# Where a slide's picture may come from, in order of preference.
+# Where a slide's picture may come from (docs/images.md): the source's own
+# page, Wikimedia Commons (open licences only), the subject's own Instagram
+# account through the API, a photo you attach. Leave one out to turn it off.
 sources = ["page", "wikimedia", "business_discovery", "attachment"]
 
 [review]
@@ -63,11 +65,17 @@ max_rounds = 2             # revisions the editor may ask for before the card is
 partner = { model = "claude-opus-5-5", effort = "medium" }    # writes the brief, talks with you
 editor  = { model = "claude-opus-5-5", effort = "medium" }    # checks the post, fresh context
 maker   = { model = "claude-sonnet-5-5", effort = "low" }     # writes the words
-monthly_usd = 30           # over this, the agents stop and the bot tells you
+pick    = { model = "claude-haiku-5-5", effort = "low" }      # picks a picture from an Instagram account
+monthly_usd = 30           # at this, the agents stop until you raise it or the month turns; you are told
 
 [telegram]
 digest_at = "08:00"        # the daily summary of what needs you
+mode = "auto"              # auto: a webhook if PUBLIC_BASE_URL is public https, else polling; or "polling", "webhook"
 
+# Optional one-way notices besides Telegram (docs/notify.md); secrets live in .env.
 [notify]
-# Optional one-way extras; tokens live in .env.
-# slack = { enabled = true }
+# [notify.slack]                                   # SLACK_WEBHOOK_URL
+# events = ["brief_ready", "awaiting_approval", "live", "on_hold", "spend_ceiling"]   # default: all
+# [notify.webhook]                                 # NOTIFY_WEBHOOK_URL; signed with POSTDESK_SECRET_KEY
+# [notify.email]                                   # SMTP_* or RESEND_API_KEY, and SMTP_FROM
+# to = "you@example.com"
