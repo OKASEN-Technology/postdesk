@@ -2,8 +2,9 @@
 
 Start with `postdesk doctor` (with Docker: `docker compose exec app
 postdesk doctor`). It checks, in order: the Claude key, `postdesk.toml`,
-the database, the migrations, the Instagram token, and that your public
-storage really is public. Fix the first `FAIL` it prints and run it again.
+the database, the migrations, the Instagram token, that your public
+storage really is public, the month's spend, and the Telegram bot. Fix the
+first `FAIL` it prints and run it again.
 
 ## Token
 
@@ -109,3 +110,42 @@ then restart. The Docker image has it built in.
 | `published` | live; the permalink is in the post | nothing |
 | `failed` | Instagram said no; the error is in the post | back to draft, reject |
 | `rejected` | a person dropped it | nothing |
+
+## Telegram
+
+**The bot does not answer.** `postdesk telegram status` says which bot the
+token belongs to and how updates arrive. If it says *webhook*, Telegram
+must reach `PUBLIC_BASE_URL/api/telegram/webhook` over https; behind NAT
+use `[telegram].mode = "polling"`. Two copies of postdesk with the same
+token take each other's updates: run one.
+
+**"This bot is private."** The message came from a chat that is not the
+paired one. `postdesk telegram status` shows which chat is paired;
+`postdesk telegram unlink`, then `/start` from the right chat and pair it.
+
+**"that code is not one the bot gave out in the last 30 minutes"**. Send
+`/start` again for a fresh code.
+
+**"2 cards are at Brief ready; reply to the card's message to say
+which"**. More than one card fits the command. Reply to the message about
+the card you mean (`/board` lists them).
+
+## The agents stopped
+
+**"The agents have stopped: this month's runs cost ..."** The spend
+reached `[llm].monthly_usd`. Raise it in Settings (it applies at once) or
+wait for the month to turn; the queued jobs then run. Scheduled posts go
+out either way.
+
+**"paused by ..."** Someone sent `/pause` or pressed Pause. `/resume`, or
+Resume in Settings.
+
+## Pictures
+
+**"wikimedia found nothing usable"**. Nothing under an open licence
+matched; try another query in the card's thread, or attach a photo.
+
+**"... is not a business or creator account Instagram lets us read"**.
+Business Discovery reads only professional accounts. Ask the person for a
+photo and attach it with their credit.
+

@@ -22,6 +22,16 @@ model that ignores its instructions still cannot get past the check.
   picked. Approving all of a card's drafts in the queue screens instead
   counts as the same gate, passed by you. The background sync never moves
   a card into *Scheduled*.
+- **Telegram** acts as `telegram:<chat id>`, and the gates accept that
+  actor only while it is the chat you paired (`board/cards.py:is_human`
+  checks it against the pairing on every move). Before pairing the bot
+  answers only `/start`, with a code; after it, every other chat is told
+  the bot is private and nothing else happens. A button or a command goes
+  through the same move as the board, so a Telegram **Approve** and a
+  click on the board are the same code.
+- A **signed link** in a one-way notice (Approve, Schedule) names one card
+  and one action, expires in 48 hours, and acts only on a second tap
+  ([docs/notify.md](notify.md)). It too goes through the gate.
 
 ## Every number comes from the source
 
@@ -48,9 +58,17 @@ model that ignores its instructions still cannot get past the check.
 - A picture from a feed is credited to its site and recorded with no
   licence. The partner decides whether the post uses it; the editor's
   **rights** check reads the record.
-- An image you attach to a card is used only if the partner gives it a
-  credit your note supports. Without one it is refused, and the card stays
-  in *Planned*.
+- An image you attach to a card (on the web, or a photo in reply in
+  Telegram) is used only if the partner gives it a credit your note
+  supports. Without one it is refused, and the card stays in *Planned*.
+- A picture an image source finds is stored with its source, the page it
+  was found on, its licence (or none) and author. Wikimedia pictures are
+  taken only under public domain, CC0 or CC BY. A picture from an
+  Instagram account comes through the Graph API, never scraping, and one
+  from someone else's account only if its caption names the subject
+  ([docs/images.md](images.md)).
+- A rights holder's yes (`image_permission`) is recorded by a person, in
+  Settings or with `postdesk permission add`. An agent cannot write one.
 - The revision turn changes words only. A slide's picture, its source line
   and anything about rights need you: a note about them puts the card On
   hold.
@@ -93,10 +111,16 @@ model that ignores its instructions still cannot get past the check.
 
 ## When something goes wrong, it stops
 
-- When Claude refuses, a reply is cut off at its token limit, or the
-  month's ceiling (`[llm].monthly_usd`) is reached, that agent's turn
-  fails. The card goes On hold with the reason, and the turn is not
-  retried. Nothing is spent again until you act.
+- When Claude refuses or a reply is cut off at its token limit, that
+  agent's turn fails. The card goes On hold with the reason, and the turn
+  is not retried. Nothing is spent again until you act.
+- When the month's spend reaches `[llm].monthly_usd`, no agent starts:
+  queued jobs wait (no card is held), every channel is told once, and the
+  web page and `/status` say so. They start again when you raise the
+  ceiling (Settings) or the month turns. A turn that crosses the ceiling
+  midway is put back in the queue. `/pause` (or Pause in Settings) stops
+  the scout and the agents by hand. Neither stops the publisher: what you
+  scheduled still posts.
 - A network error, the renderer being down, or the API being overloaded
   is retried with backoff, five times at most, and then held the same way.
 - One job runs per card at a time. A unique index in the database holds

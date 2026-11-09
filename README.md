@@ -3,16 +3,10 @@
 An Instagram manager you run yourself, driven from Telegram, with Claude
 writing the posts and you approving every one.
 
-> **Status: the scheduler, the maker, and the board with its planner and
-> editor work.** Point it at a feed (or paste a link or some text) and each
-> new item becomes a card; Claude writes a brief and talks it over with you
-> in the card's thread; you approve; Claude makes the carousel and its Story
-> in your voice and theme; a second, independent Claude pass checks it; you
-> pick the time; it posts through Instagram's official API. All of that
-> happens in the web page for now. The Telegram bot and the image sources
-> are the next [milestone](docs/roadmap.md); until they land, the sections
-> below marked *coming* describe where this is going, not what it does
-> today.
+> **Status: everything below works.** The scheduler, the maker, the board
+> with its planner and editor, the Telegram bot, the image sources, the
+> settings screen and the spend ceiling. What is next is on the
+> [roadmap](docs/roadmap.md).
 
 You tell it what you post about: a blog feed, a folder of Markdown, or a
 link you send it. It proposes a post as a card. Claude writes a brief and
@@ -21,7 +15,7 @@ copy, the caption and the alt text, renders a carousel and a Story in your
 theme, and a second, independent Claude pass checks the words, the numbers,
 the image credits and the accessibility. You see the preview in Telegram,
 tap **Schedule**, and it posts through Instagram's official API at that
-time. A day later it tells you how the post did.
+time. A week later it tells you how the post did.
 
 Nothing is ever posted without you approving the exact post. There is no
 scraping, no auto-liking, no DMs, no follower games.
@@ -38,7 +32,8 @@ scraping, no auto-liking, no DMs, no follower games.
 - An **Anthropic API key** for Claude, to have posts written
   ([get one here](https://platform.claude.com/); a typical post costs a
   few cents). Queueing hand-made posts needs none.
-- *Coming:* a **Telegram account** for the daily chat.
+- A **Telegram account**, for the daily chat. Optional: everything also
+  works from the web page.
 
 ## Install in 15 minutes
 
@@ -94,10 +89,9 @@ bucket. [docs/deploy.md](docs/deploy.md) has both.
 
 ## Make your first post
 
-Until the Telegram bot arrives (M3), the web page does everything: the
-**Board** at http://localhost:8080 is where cards are planned, approved
-and scheduled ([below](#have-claude-make-the-post)), and the **Queue**
-holds every post. This section is the smallest start: a post you made
+The web page does everything the bot does: the **Board** at
+http://localhost:8080 is where cards are planned, approved and scheduled
+([below](#have-claude-make-the-post)), and the **Queue** holds every post. This section is the smallest start: a post you made
 yourself.
 
 Make the slides yourself for now (1080×1350 PNG or JPEG for the feed,
@@ -193,12 +187,31 @@ from your own cron, `docker compose exec app postdesk cron` is one pass.
 
 The agents run inside the app too: one job at a time per card, retried
 when the network or the API hiccups, and a card goes *On hold* with the
-reason when Claude refuses, a reply is cut off, or the month's spend
-ceiling is reached. The board shows what each card cost.
+reason when Claude refuses or a reply is cut off. The board shows what
+each card cost. When the month's spend reaches `[llm].monthly_usd`, the
+agents stop: their jobs wait, nothing is held, every channel is told once,
+and they start again when you raise the ceiling in **Settings** or the
+month turns. Scheduled posts still go out. `/pause` in Telegram (or
+**Pause** in Settings) stops the scout and the agents by hand.
 
-*Coming:* the same loop in Telegram. It will send you each brief and
-preview with **Approve** and **Schedule** buttons, and a daily digest. The
-web page stays for editing by hand and for the settings.
+## Run your day from Telegram
+
+Make a bot with @BotFather, put its token in `.env`, and pair your chat
+([Appendix A](#appendix-a-run-your-day-from-telegram) has every step). From
+then on the bot sends you each brief with **Approve**, **Rethink** and
+**Hold**, each finished post with its slides, caption, alt text and the
+editor's checks and a **Schedule** button, a note when a post goes live
+and a week later how it did, and a digest every morning. Reply to any of
+its messages to talk to the partner about that card. Only your paired
+chat can do anything; anyone else who finds the bot is told it is private.
+
+The web page stays for editing by hand, for the settings, and for
+everything the chat does.
+
+Not on Telegram? `[notify]` in `postdesk.toml` sends the same notices,
+one way, to Slack, to a URL of yours (signed), or by email; the brief and
+the finished post carry a link that asks once more and then approves or
+schedules ([docs/notify.md](docs/notify.md)).
 
 ## Make it yours
 
@@ -223,6 +236,16 @@ web page stays for editing by hand and for the settings.
   ([docs/guardrails.md](docs/guardrails.md)).
 - **Model and spend.** `[llm]` picks the model and effort per agent and
   sets a monthly ceiling, after which the agents stop.
+- **Pictures.** `[images].sources` says where a slide's picture may come
+  from: the source's own page, Wikimedia Commons (open licences only), the
+  subject's own Instagram account through the API, or a photo you attach.
+  Each is stored with its credit, licence and where it was found; a rights
+  holder's yes goes on file with `postdesk permission add` or in Settings
+  ([docs/images.md](docs/images.md)).
+- **From the browser.** **Settings** changes the account, the schedule, the
+  voice, the sources, the image sources, the models and the ceiling without
+  editing the file; each change is kept in the database over
+  `postdesk.toml` and can be taken back.
 
 ## What it will never do
 
@@ -257,3 +280,59 @@ each state means.
 Apache-2.0. See [CONTRIBUTING.md](CONTRIBUTING.md). Built by
 [OKASEN Technology](https://github.com/OKASEN-Technology) for our own
 account and opened up because the setup was the hard part.
+
+## Appendix A: run your day from Telegram
+
+**1. Make the bot.** In Telegram, open a chat with @BotFather, send
+`/newbot`, and give it a name and a username (it must end in `bot`).
+BotFather answers with a token like `123456789:AA...`. Put it in `.env`:
+
+```
+TELEGRAM_BOT_TOKEN=123456789:AA...
+```
+
+and restart (`docker compose up -d`). `postdesk doctor` now says the bot
+answers and that no chat is paired.
+
+**2. Pair your chat.** Send `/start` to your bot. It answers with a
+six-letter code, good for 30 minutes. Paste it in **Settings -> Telegram**,
+or:
+
+```bash
+docker compose exec app postdesk telegram link ABC123
+```
+
+The bot says hello and lists what it does. From now on it talks to that
+chat only. `postdesk telegram test` sends a test message,
+`postdesk telegram status` says which bot, which chat and how updates
+arrive, and `postdesk telegram unlink` unpairs it.
+
+No public address is needed: the bot asks Telegram for new messages (long
+polling), so it works from a laptop. If `PUBLIC_BASE_URL` is a public
+`https` address, it uses a webhook instead; `[telegram].mode` can force
+either ([docs/deploy.md](docs/deploy.md)).
+
+**3. A day.**
+
+- *Morning.* The digest, at `[telegram].digest_at` (08:00): what needs
+  you, what is scheduled this week, and the month's spend.
+- *A new post.* The scout files new items from your feeds by itself. To
+  add one, send `/new` and a link, or `/new` and a few lines of text.
+- *A brief.* The bot sends it with its picture and the picture's licence.
+  Tap **Approve**; or **Rethink** and reply with what to change; or reply
+  to the message with a question, and the partner answers there. To offer
+  a picture, send a photo in reply to the card's message with where it is
+  from in the caption (`Photo: Jo Baker, mine to use`).
+- *A finished post.* The slides, the caption, the alt text, the editor's
+  checks and a recommended time. Tap **Schedule for ...**, or
+  **Pick a time** and reply `tomorrow 18:00` or `fri 7:30`. **Rethink**
+  sends it back to the maker with your note.
+- *Later.* "Live" with the link when it posts; the numbers a week on.
+  `/unschedule` pulls a scheduled post back; `/hold` and `/drop` put a card
+  aside or take it off the board.
+
+Any time: `/board` (every open card), `/queue` (what is scheduled),
+`/status` (the account, the renderer, the month's spend), `/pause` and
+`/resume`, `/help`. A command that is not a reply acts on the one card it
+fits (the only brief waiting, say); if there are several, the bot asks you
+to reply to the right card's message.

@@ -49,7 +49,8 @@ from the feed, the link is the page.
   name>` and recorded with no licence. The partner sees it and decides
   whether the post uses it; the editor's rights check reads that record.
   If you do not have the right to use a site's pictures, leave them out
-  in the brief (or attach your own with a credit).
+  in the brief (or attach your own with a credit). When the item has no
+  picture, the partner can look for one ([docs/images.md](images.md)).
 - **The partner's web search** is limited to the feed's own site, the
   item's site, and `[partner].allowed_domains`.
 - `template` picks the post's shape (default `article`); the partner may
