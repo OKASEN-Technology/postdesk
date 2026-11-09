@@ -28,6 +28,8 @@ dependencies = [
     "typer>=0.15",
     "feedparser>=6.0",
     "python-multipart>=0.0.20",
+    "pyyaml>=6.0",
+    "jsonschema>=4.23",
 ]
 
 [project.optional-dependencies]
@@ -36,6 +38,12 @@ dev = ["pytest>=8", "pytest-asyncio>=0.24", "ruff>=0.8", "respx>=0.22"]
 
 [project.scripts]
 postdesk = "postdesk.cli:main"
+
+# Sources answer "what is new to post about" and "what are the facts";
+# another package adds one here (docs/sources.md).
+[project.entry-points."postdesk.sources"]
+markdown = "postdesk.sources.markdown:MarkdownSource"
+manual = "postdesk.sources.manual:ManualSource"
 
 [project.urls]
 Homepage = "https://github.com/OKASEN-Technology/postdesk"

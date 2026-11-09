@@ -23,7 +23,7 @@ from postdesk.db import session as db_session
 
 TEST_DB = os.environ.get("POSTDESK_TEST_DATABASE_URL",
                          "postgresql+psycopg://postgres:postgres@localhost:5432/postdesk_test")
-TABLES = ("social_post", "content_asset", "metric", "setting", "image_permission")
+TABLES = ("social_post", "content_asset", "metric", "setting", "image_permission", "agent_run")
 
 
 def pytest_configure(config):

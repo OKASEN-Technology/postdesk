@@ -17,6 +17,7 @@ from postdesk import storage
 from postdesk.config import config, settings
 from postdesk.db import migrate
 from postdesk.db.session import SessionLocal, engine
+from postdesk.maker.render import Renderer, RenderError
 
 
 @dataclass
@@ -33,7 +34,34 @@ def check_claude_key() -> Check:
         return Check("Claude key", True, "ANTHROPIC_API_KEY is set (not called)")
     return Check("Claude key", False, "ANTHROPIC_API_KEY is empty",
                  "Get a key at https://platform.claude.com/ and put it in .env. The scheduler works without it; "
-                 "the writer (M1) needs it.", warn=True)
+                 "`postdesk make` needs it.", warn=True)
+
+
+TEST_SPEC = {"type": "statement", "kicker": "Doctor", "headline": "The renderer answers", "body": "A test slide."}
+
+
+def check_renderer(renderer: Renderer | None = None) -> Check:
+    """`GET /health`, then one small slide rendered, so a wrong token or a
+    missing font shows up here and not in the first `postdesk make`."""
+    if not settings.renderer_url:
+        return Check("Renderer", False, "RENDERER_URL is empty",
+                     "The scheduler works without it; `postdesk make` needs it. Docker Compose sets it; locally, "
+                     "`cd renderer && npm run build && npx postdesk-renderer serve` and set RENDERER_URL in .env.",
+                     warn=True)
+    r = renderer or Renderer()
+    try:
+        health = r.health()
+        data = r.render(TEST_SPEC)
+    except RenderError as e:
+        return Check("Renderer", False, str(e),
+                     "Check RENDERER_URL and that RENDERER_TOKEN matches the service's (renderer/README.md).")
+    themes = ", ".join(health.get("themes") or []) or "none"
+    detail = (f"{settings.renderer_url}: version {health.get('version', '?')}, themes {themes}, "
+              f"test slide {len(data) // 1024} KB")
+    if config.theme.name not in (health.get("themes") or []):
+        return Check("Renderer", False, detail + f"; theme {config.theme.name!r} is not among them",
+                     "Set [theme].name in postdesk.toml to one the renderer has, or add yours (docs/themes.md).")
+    return Check("Renderer", True, detail)
 
 
 def check_config() -> Check:
@@ -147,11 +175,12 @@ def _tiny_jpeg() -> bytes:
 TEST_JPEG = _tiny_jpeg()
 
 
-def run(*, graph: ig.Graph | None = None) -> list[Check]:
+def run(*, graph: ig.Graph | None = None, renderer: Renderer | None = None) -> list[Check]:
     checks = [check_claude_key(), check_config(), check_database()]
     if checks[-1].ok:
         checks.append(check_migrations())
         if checks[-1].ok:
             checks.append(check_instagram(graph))
             checks.append(check_storage())
+    checks.append(check_renderer(renderer))
     return checks

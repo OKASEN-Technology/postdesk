@@ -1,6 +1,6 @@
 """
-The tables (docs/roadmap.md, M0). Later milestones add `card`,
-`card_comment`, `card_event` and `agent_run`.
+The tables (docs/roadmap.md): M0's queue and storage, M1's `agent_run`.
+Later milestones add `card`, `card_comment`, `card_event` and `job`.
 """
 
 from __future__ import annotations
@@ -127,3 +127,28 @@ class Setting(Base):
     key: Mapped[str] = mapped_column(String, primary_key=True)
     value: Mapped[dict | list | str | int | float | bool | None] = mapped_column(JSONType)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class AgentRun(Base):
+    """One Claude call (llm.py): which agent, for which post or card, the
+    model, tokens, cost in USD and how it ended. `postdesk.llm` sums a
+    month's `cost_usd` against `[llm].monthly_usd` before every call."""
+
+    __tablename__ = "agent_run"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    agent: Mapped[str] = mapped_column(String, nullable=False)  # maker | partner | editor | ...
+    post_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), index=True)
+    card_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), index=True)
+    ref: Mapped[str | None] = mapped_column(String)  # the source ref the run was about
+    model: Mapped[str] = mapped_column(String, nullable=False)
+    effort: Mapped[str | None] = mapped_column(String)
+    input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cache_read_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cache_write_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cost_usd: Mapped[float | None] = mapped_column(Numeric(10, 6))  # None for a model with no price on file
+    status: Mapped[str] = mapped_column(String, nullable=False, default="ok")  # ok | failed | refused
+    error: Mapped[str | None] = mapped_column(Text)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

@@ -1,0 +1,19 @@
+# Stories only, no feed post: 1 to 3 frames, each its own post in the queue,
+# published in order. Front matter `frames: 2` sets how many (default 1).
+name: story-only
+description: One to three Story frames and no feed post.
+kind: story
+kicker: "{{ facts.extra.kicker or 'Today' }}"
+
+slides:
+  - type: story
+    brief: >-
+      Frame {{ n }} of a Story. The big top half shows `figure` (a number from the piece) if you give one,
+      else the kicker; leave figure empty unless the frame is about that number. The last frame points to
+      the link in bio.
+    fields: [headline, line, figure]
+    fixed:
+      kicker: "{{ kicker }}"
+      kicker_sub: "{{ month }}"
+      image: "{{ facts.hero }}"
+    repeat: "{{ facts.extra.frames or 1 }}"

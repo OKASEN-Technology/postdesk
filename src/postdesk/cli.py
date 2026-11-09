@@ -95,7 +95,7 @@ def init(
 
 @app.command()
 def doctor() -> None:
-    """Check the Claude key, database, migrations, Instagram token and public storage, in order."""
+    """Check the Claude key, database, migrations, Instagram token, public storage and the renderer, in order."""
     from postdesk import doctor as dr
 
     checks = dr.run()
@@ -324,6 +324,87 @@ def suggest_times(overwrite: bool = typer.Option(False, "--overwrite", help="Rec
             _echo("Every draft already has a time (use --overwrite to recompute).")
         for p in sorted(posts, key=lambda p: p.publish_at):
             _echo(f"  {p.publish_at.astimezone(config.account.tz):%Y-%m-%d %H:%M}  {p.kind:<8} {p.title}")
+
+
+# --- making ------------------------------------------------------------------
+
+
+@app.command()
+def make(
+    source: Path = typer.Argument(..., help="A Markdown file with front matter (docs/sources.md)."),
+    template: str = typer.Option("", "--template", "-t",
+                                 help="article, explainer, spotlight, stat, list, story-only, or one in ./templates."),
+    plan: Path | None = typer.Option(None, "--plan", help="A one-off plan (a template YAML written for this post)."),
+    guidance: str = typer.Option("", "--guidance", help="A line or two on the angle to take."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show the plan and the brief; call nothing."),
+    created_by: str = typer.Option("maker", "--created-by"),
+) -> None:
+    """Turn a Markdown file into a rendered carousel and its Story, as drafts in the queue."""
+    from postdesk import llm, maker
+    from postdesk.config import config, settings
+    from postdesk.db.session import SessionLocal
+    from postdesk.sources import SourceError
+    from postdesk.sources.markdown import facts_from_file
+
+    try:
+        facts = facts_from_file(source)
+        tpl = maker.load_template(plan if plan else (template or facts.template or "article"))
+        kind, slots, story = maker.plan(tpl, facts)
+    except (SourceError, maker.TemplateError) as e:
+        _err(str(e))
+        raise typer.Exit(1) from None
+    _echo(f"{facts.title}\n  template {tpl.name}: {kind}, {len(slots)} {'frame' if kind == 'story' else 'slide'}(s)"
+          f" ({', '.join(s.type for s in slots)}){' + story' if story else ''}")
+    if dry_run:
+        hero = (facts.hero.url or facts.hero.path) if facts.hero else "none"
+        _echo(f"  figures: {facts.figures or 'none named'}; hero: {hero}")
+        _echo("\n" + maker.words.brief(facts, kind, slots, story, guidance or None))
+        _echo("\nDry run: nothing was called, stored or queued.")
+        return
+    with SessionLocal() as session:
+        try:
+            posts = maker.make(session, facts, tpl, guidance=guidance or None, created_by=created_by, log=_echo)
+        except (maker.MakerError, maker.RenderError, llm.LLMError, SourceError) as e:
+            _err(str(e))
+            raise typer.Exit(1) from None
+    _echo("\nQueued as drafts:")
+    for p in posts:
+        when = p.publish_at.astimezone(config.account.tz) if p.publish_at else None
+        _echo(f"  {p.kind:<9} {p.title}  {when:%a %d %b %H:%M}" if when else f"  {p.kind:<9} {p.title}")
+        _echo(f"            {settings.public_base_url.rstrip('/')}/posts/{p.id}")
+
+
+@app.command()
+def render(
+    spec: Path = typer.Option(..., "--spec", help="A slide spec, JSON (examples/slide.json)."),
+    out: Path = typer.Option(..., "--out", help="Where to write the JPEG."),
+    theme: str = typer.Option("", "--theme", help="A theme the renderer has; default [theme].name."),
+) -> None:
+    """Render one slide spec to a JPEG through the renderer, to try a theme or a layout."""
+    import json
+
+    from postdesk import maker
+
+    try:
+        data = maker.Renderer(theme=theme or None).render(json.loads(spec.read_text(encoding="utf-8")))
+    except (maker.RenderError, ValueError) as e:
+        _err(str(e))
+        raise typer.Exit(1) from None
+    out.write_bytes(data)
+    _echo(f"wrote {out} ({len(data) // 1024} KB)")
+
+
+@app.command()
+def templates() -> None:
+    """List the post templates on the search path (./templates, POSTDESK_TEMPLATES, built in)."""
+    from postdesk.maker import plans
+
+    for name, path in sorted(plans.available().items()):
+        try:
+            t = plans.load_template(path)
+            _echo(f"{name:<12} {t.kind:<9} {t.description}")
+        except plans.TemplateError as e:
+            _echo(f"{name:<12} broken: {e}")
 
 
 # --- db ----------------------------------------------------------------------

@@ -1,0 +1,57 @@
+# The default: a cover, three statements, an optional number, a call to
+# action, and the Story. docs/templates.md explains every key.
+name: article
+description: A cover, three key points, a number if the piece has one, a call to action, and a Story.
+kind: carousel
+kicker: "{{ facts.extra.kicker or 'New post' }}"
+
+slides:
+  - type: cover
+    if: facts.hero
+    brief: >-
+      The hook: a headline of 6 words or fewer that makes someone swipe, and one line of promise under it.
+    fields: [headline, sub]
+    fixed:
+      kicker: "{{ kicker }}"
+      kicker_sub: "{{ month }}"
+      image: "{{ facts.hero }}"
+      link: "{{ account.site }}"
+
+  - type: cover
+    unless: facts.hero
+    brief: >-
+      The hook: a headline of 6 words or fewer that makes someone swipe, and one line of promise under it.
+      There is no photo, so `figure` fills the top half: the piece's most striking number (e.g. '72h', '78%'),
+      or empty if it has none.
+    fields: [headline, sub, figure]
+    fixed:
+      kicker: "{{ kicker }}"
+      kicker_sub: "{{ month }}"
+      link: "{{ account.site }}"
+
+  - type: statement
+    brief: "Key point {{ n }} of the piece, in the order the piece makes them."
+    fields: [kicker, headline, headline_em, body, source]
+    repeat: 3
+
+  - type: stat
+    optional: true
+    brief: >-
+      One headline number from the piece with its label. `figure` must be a number that appears verbatim in
+      the piece or the data (e.g. '78%', '72 hours', '4,855'). `figure_sub` says what it is in one line.
+      `note` is a short line on what it means. If the piece has no number worth a slide, leave figure empty
+      and the slide is dropped.
+    fields: [figure, figure_sub, kicker, note, source]
+
+  - type: cta
+    brief: >-
+      One action: read the full piece via the link in bio. The headline is 3 to 6 words split in two:
+      `headline` is the start and `headline_em` the last 2 or 3 words, shown after it in italic
+      (e.g. headline 'Read the', headline_em 'whole method.'). Don't repeat words across the two.
+    fields: [headline, headline_em, body]
+    fixed:
+      kicker: "{{ kicker }}"
+
+story:
+  brief: "A 9:16 companion to the post: the headline in 3 to 8 words, one line ending on what is behind the link."
+  fields: [headline, line]

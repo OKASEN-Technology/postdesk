@@ -1,0 +1,20 @@
+# One number, one image post, and its Story. Bands (a range chart under the
+# number) come from front matter `bands:` and `scale:` when present.
+name: stat
+description: One number on one slide, and a Story.
+kind: image
+kicker: "{{ facts.extra.kicker or 'By the numbers' }}"
+
+slides:
+  - type: stat
+    brief: >-
+      The one number the piece is about, verbatim from the piece or the data (e.g. '78%', '72 hours').
+      `figure_sub` says what it is and where it comes from in one line. `note` is a short line on what it means.
+    fields: [figure, figure_sub, kicker, note, source]
+    fixed:
+      bands: "{{ facts.extra.bands }}"
+      scale: "{{ facts.extra.scale }}"
+
+story:
+  brief: "A 9:16 companion: the number's meaning in a headline of 3 to 8 words, one line on what is behind the link."
+  fields: [headline, line]
