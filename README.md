@@ -3,14 +3,16 @@
 An Instagram manager you run yourself, driven from Telegram, with Claude
 writing the posts and you approving every one.
 
-> **Status: the scheduler and the maker work.** `postdesk make article.md`
-> turns a Markdown file into a rendered carousel and its Story, written by
-> Claude in your voice and your theme, as drafts you approve in the web
-> page; a hand-made post can be queued too; approved posts go out through
-> Instagram's official API at their time. The planner (cards and a brief
-> talked over with you), the editor pass and the Telegram bot are the next
-> [milestones](docs/roadmap.md). Until they land, the sections below marked
-> *coming* describe where this is going, not what it does today.
+> **Status: the scheduler, the maker, and the board with its planner and
+> editor work.** Point it at a feed (or paste a link or some text) and each
+> new item becomes a card; Claude writes a brief and talks it over with you
+> in the card's thread; you approve; Claude makes the carousel and its Story
+> in your voice and theme; a second, independent Claude pass checks it; you
+> pick the time; it posts through Instagram's official API. All of that
+> happens in the web page for now. The Telegram bot and the image sources
+> are the next [milestone](docs/roadmap.md); until they land, the sections
+> below marked *coming* describe where this is going, not what it does
+> today.
 
 You tell it what you post about: a blog feed, a folder of Markdown, or a
 link you send it. It proposes a post as a card. Claude writes a brief and
@@ -92,6 +94,12 @@ bucket. [docs/deploy.md](docs/deploy.md) has both.
 
 ## Make your first post
 
+Until the Telegram bot arrives (M3), the web page does everything: the
+**Board** at http://localhost:8080 is where cards are planned, approved
+and scheduled ([below](#have-claude-make-the-post)), and the **Queue**
+holds every post. This section is the smallest start: a post you made
+yourself.
+
 Make the slides yourself for now (1080×1350 PNG or JPEG for the feed,
 1080×1920 for a Story), write the caption in a text file with the alt
 text after a `---` line:
@@ -135,9 +143,26 @@ docker compose exec app postdesk post slides/01.png slides/02.png --caption capt
 
 ## Have Claude make the post
 
-Write what you want to post about as a Markdown file with a little front
-matter: the title, the date, a summary, the link, an optional photo with
-its credit, and any numbers the slides may use.
+**From the board.** Add a feed to `[sources]` in `postdesk.toml`
+(`rss = { url = "https://example.com/feed.xml" }`), or type a title and
+some text (or just a link) into **Post about this** on the board. The
+scout files each new item as a card in *Planned*, at most five a run,
+every two hours between 06:00 and 21:00 (`[scout]`), and the partner
+writes a brief in the card's thread: the angle, the slides, which
+pictures to use, and any question it has for you. Answer in the thread,
+attach a photo with its credit if you have a better one, and press
+**Approve** when the brief is right. The maker makes the post, the editor
+reads it in a fresh context and either passes it to *Awaiting approval*,
+sends it back for a revision of the words (twice at most, `[review]`), or
+holds it with the reason. Open the drafts, change anything by hand, and
+press **Schedule** with the recommended time or your own. Only you can
+move a card into *Approved* or *Scheduled*. `postdesk scout` runs the
+scout by hand; `postdesk worker` runs the agents in their own process if
+you start the app with `serve --no-worker`.
+
+**From a file.** Write what you want to post about as a Markdown file
+with a little front matter: the title, the date, a summary, the link, an
+optional photo with its credit, and any numbers the slides may use.
 [`examples/article.md`](examples/article.md) is a complete one. Then:
 
 ```bash
@@ -166,11 +191,14 @@ set (`publisher_hours` in `postdesk.toml`, 06:00 to 21:00 by default), and
 once a day collects how each recent post did. If you would rather run it
 from your own cron, `docker compose exec app postdesk cron` is one pass.
 
-*Coming:* the daily loop in Telegram. You will tell it where your posts
-come from (`[sources]` in `postdesk.toml`), it will file a card for each
-new item, write a brief and talk it over with you, make the slides, and
-send you the preview with a **Schedule** button. The web page stays for
-editing a caption by hand and for the settings.
+The agents run inside the app too: one job at a time per card, retried
+when the network or the API hiccups, and a card goes *On hold* with the
+reason when Claude refuses, a reply is cut off, or the month's spend
+ceiling is reached. The board shows what each card cost.
+
+*Coming:* the same loop in Telegram. It will send you each brief and
+preview with **Approve** and **Schedule** buttons, and a daily digest. The
+web page stays for editing by hand and for the settings.
 
 ## Make it yours
 
@@ -187,9 +215,12 @@ editing a caption by hand and for the settings.
   copy the default and point `[theme]` at yours ([docs/themes.md](docs/themes.md)).
 - **The shape of a post.** Six templates are built in; add a YAML file to
   `templates/` for your own ([docs/templates.md](docs/templates.md)).
-- **Where posts come from.** A Markdown file or folder today, with the
-  front matter in [docs/sources.md](docs/sources.md); a feed and a link
-  with the planner.
+- **Where posts come from.** A feed, a link, a Markdown file or folder, or
+  text you paste ([docs/sources.md](docs/sources.md)). `[partner]` lists
+  the extra sites the partner may search to check a fact.
+- **What the editor checks.** Six checks are built in; add your own, one
+  sentence each, under `[review.extra_checks]`
+  ([docs/guardrails.md](docs/guardrails.md)).
 - **Model and spend.** `[llm]` picks the model and effort per agent and
   sets a monthly ceiling, after which the agents stop.
 

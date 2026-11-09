@@ -26,19 +26,38 @@ retired_phrases = ["game-changer", "elevate", "not just X, it's Y"]
 name = "default"           # renderer/themes/<name>/theme.json, or themes/<name>/ here (docs/themes.md)
 
 [sources]
-# What you post about. Each entry files a card when something new appears.
-# rss = { url = "https://example.com/feed.xml", template = "article" }   # with the planner (M2)
-markdown = { path = "./posts", template = "article" }                    # docs/sources.md
+# What you post about. The scout files a card in Planned for each new item
+# (docs/sources.md). An entry's name is its source type unless it says `type`,
+# so two feeds can sit side by side.
+# rss = { url = "https://example.com/feed.xml", template = "article" }
+# news = { type = "rss", url = "https://example.org/news.atom" }
+markdown = { path = "./posts", template = "article" }
+# A link you paste on the board (or with `link` in POST /api/cards) is the `url` source; it needs no entry.
+
+[scout]
+every_hours = 2            # how often it looks
+hours = ["06:00", "21:00"] # and between when, in your timezone
+days = 3                   # how far back an item may be
+max_per_run = 5            # new cards a run at most; the rest wait for the next
+
+[partner]
+# The partner may search the web to check a date or a name: only on the
+# source's own site and these. web_search = false turns it off.
+allowed_domains = []       # e.g. ["en.wikipedia.org"]
+web_search = true
+max_searches = 5           # per turn; each costs a cent
 
 [images]
 # Where a slide's picture may come from, in order of preference.
 sources = ["page", "wikimedia", "business_discovery", "attachment"]
 
 [review]
-max_rounds = 2             # writer <-> editor rounds before the card is parked for you
+max_rounds = 2             # revisions the editor may ask for before the card is held for you
 [review.extra_checks]
-# Your own checks, one sentence each. The editor adds them to its eight.
+# Your own checks, one sentence each. The editor adds them to its six
+# (voice, facts, rights, ai-label, accessibility, links) and checks each one.
 # prices = "No price is stated for a single item."
+# claims = "Nothing is called healthy, healing or good for you."
 
 [llm]
 partner = { model = "claude-opus-5-5", effort = "medium" }    # writes the brief, talks with you
