@@ -174,20 +174,33 @@ def update_post(post_id: uuid.UUID, body: PostUpdate, actor: str = Depends(requi
     return _run(queue.update_post, session, post_id, title=body.title, caption=body.caption, alt_texts=body.alt_texts)
 
 
+def _then_board(result: PostItem, session: Session, actor: str) -> PostItem:
+    """A card's post changed in the queue screens: the card follows
+    (board/sync.py `queue_changed`), with the admin as the actor."""
+    from postdesk.board import sync
+
+    if result.card_id:
+        sync.queue_changed(session, uuid.UUID(result.card_id), actor=actor)
+    return result
+
+
 @router.post("/{post_id}/approve", response_model=PostItem)
 def approve_post(post_id: uuid.UUID, body: PostApprove, actor: str = Depends(require_auth),
                  session: Session = Depends(get_session)) -> PostItem:
-    return _run(queue.approve, session, post_id, publish_at=body.publish_at, approved_by=body.approved_by or actor)
+    result = _run(queue.approve, session, post_id, publish_at=body.publish_at, approved_by=body.approved_by or actor)
+    return _then_board(result, session, actor)
 
 
 @router.post("/{post_id}/unapprove", response_model=PostItem)
-def unapprove_post(post_id: uuid.UUID, session: Session = Depends(get_session)) -> PostItem:
-    return _run(queue.unapprove, session, post_id)
+def unapprove_post(post_id: uuid.UUID, actor: str = Depends(require_auth),
+                   session: Session = Depends(get_session)) -> PostItem:
+    return _then_board(_run(queue.unapprove, session, post_id), session, actor)
 
 
 @router.post("/{post_id}/reject", response_model=PostItem)
-def reject_post(post_id: uuid.UUID, session: Session = Depends(get_session)) -> PostItem:
-    return _run(queue.reject, session, post_id)
+def reject_post(post_id: uuid.UUID, actor: str = Depends(require_auth),
+                session: Session = Depends(get_session)) -> PostItem:
+    return _then_board(_run(queue.reject, session, post_id), session, actor)
 
 
 @router.post("/{post_id}/back-to-draft", response_model=PostItem)

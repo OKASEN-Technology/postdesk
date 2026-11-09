@@ -1,0 +1,71 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["column", "reply", "brief", "guidance", "use_images", "attached_images", "post"],
+  "properties": {
+    "column": {
+      "type": "string",
+      "enum": ["Planned", "Brief ready"],
+      "description": "Brief ready once the brief is complete and nothing material is open; Planned while you need an answer from the admin."
+    },
+    "reply": {
+      "type": ["string", "null"],
+      "description": "A new comment in the thread: questions with options and your recommendation, or what changed. Null if there is nothing to say."
+    },
+    "brief": {
+      "type": ["string", "null"],
+      "description": "The whole brief for the admin (Markdown), replacing the last one. Null leaves it as it is."
+    },
+    "guidance": {
+      "type": ["string", "null"],
+      "description": "Instructions for the maker: angle, hook, what each slide leads with, the caption's shape, what to avoid. Numbers only from the source. Null only when brief is null."
+    },
+    "use_images": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "Keys of the images the post uses (hero, subject-N, attachment-N). Leave one out to keep it off the post."
+    },
+    "attached_images": {
+      "type": "array",
+      "description": "Images the admin attached that you judged usable, with the credit their comments support. Each one counts as used.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["attachment", "for", "credit", "what"],
+        "properties": {
+          "attachment": {"type": "string", "description": "The key, attachment-N."},
+          "for": {"type": "string", "description": "hero (the cover and the Story), or the name of the subject it shows."},
+          "credit": {"type": "string", "description": "The credit printed on the slide, e.g. 'Photo: Jo Baker'."},
+          "what": {"type": "string", "description": "What it shows, in a few plain words, for the alt text."}
+        }
+      }
+    },
+    "post": {
+      "anyOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "slides"],
+          "properties": {
+            "kind": {"type": "string", "enum": ["carousel", "story"]},
+            "slides": {
+              "type": "array",
+              "description": "In order. A carousel: 3 to 10, a cover first and a cta last. A Story: 1 to 3 story frames.",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["type", "brief"],
+                "properties": {
+                  "type": {"type": "string", "enum": ["cover", "statement", "stat", "cta", "story"]},
+                  "brief": {"type": "string", "description": "What this slide says and leads with, for the maker."}
+                }
+              }
+            }
+          }
+        }
+      ],
+      "description": "Only when the card has no template: your slide plan, which the maker follows once approved. Null otherwise, and null keeps the last one."
+    }
+  }
+}

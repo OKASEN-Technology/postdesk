@@ -9,6 +9,11 @@ schema in `output_config.format`), so the reply is always one JSON object.
   with backoff; anything else is an `LLMError` that says what happened.
 - A refusal or a reply cut off at `max_tokens` is a failed turn, never a
   retry that spends again.
+- Images go in as content blocks (`image_block`): a URL the API fetches,
+  or the bytes of a stored file.
+- The partner's turn may carry the server-side web search tool
+  (`web_search_tool`); a turn the server pauses (`pause_turn`) is resumed,
+  `MAX_CONTINUATIONS` times at most, and its searches are costed.
 - Every call is logged on `agent_run` with its tokens and cost; a month
   whose runs add up to more than `[llm].monthly_usd` stops every agent
   until the month turns or the ceiling is raised.
@@ -19,6 +24,7 @@ as data, the schema says what comes out.
 
 from __future__ import annotations
 
+import base64
 import json
 import time
 import uuid
@@ -55,6 +61,9 @@ CACHE_WRITE = 1.25
 CACHE_READ = 0.1
 MAX_TOKENS = 16000
 RETRIES = 4
+MAX_CONTINUATIONS = 4
+WEB_SEARCH_TOOL = "web_search_20260209"
+WEB_SEARCH_USD = 10 / 1000  # per search
 _RETRYABLE = (RateLimitError, APIConnectionError, InternalServerError, OverloadedError, ServiceUnavailableError)
 
 
@@ -65,6 +74,11 @@ class LLMError(RuntimeError):
 
 class BudgetExceeded(LLMError):
     pass
+
+
+class LLMTransient(LLMError):
+    """The API stayed unreachable or overloaded through every retry: worth
+    trying again later (the job runner does), unlike every other LLMError."""
 
 
 def price_of(model: str) -> tuple[float, float] | None:
@@ -84,7 +98,31 @@ def cost_usd(model: str, usage) -> float | None:
     write = getattr(usage, "cache_creation_input_tokens", None) or 0
     total = (usage.input_tokens * inp + usage.output_tokens * out
              + read * inp * CACHE_READ + write * inp * CACHE_WRITE)
-    return round(total / 1_000_000, 6)
+    return round(total / 1_000_000 + searches_in(usage) * WEB_SEARCH_USD, 6)
+
+
+def searches_in(usage) -> int:
+    stu = getattr(usage, "server_tool_use", None)
+    return int(getattr(stu, "web_search_requests", None) or 0) if stu is not None else 0
+
+
+def image_block(*, url: str | None = None, data: bytes | None = None, media_type: str = "image/jpeg") -> dict:
+    """An image content block: by URL (the API fetches it) or by bytes."""
+    if data is not None:
+        return {"type": "image", "source": {"type": "base64", "media_type": media_type,
+                                            "data": base64.b64encode(data).decode()}}
+    if url and url.startswith("data:image/"):
+        head, _, b64 = url.partition(",")
+        return {"type": "image", "source": {"type": "base64", "media_type": head[5:].split(";")[0], "data": b64}}
+    if not url or not url.startswith(("http://", "https://")):
+        raise LLMError(f"an image needs an http(s) URL or its bytes ({url!r} given)")
+    return {"type": "image", "source": {"type": "url", "url": url}}
+
+
+def web_search_tool(allowed_domains: list[str], *, max_uses: int = 5) -> dict:
+    """The server-side web search tool, limited to `allowed_domains`."""
+    return {"type": WEB_SEARCH_TOOL, "name": "web_search", "max_uses": max_uses,
+            "allowed_domains": sorted({d.strip().lower() for d in allowed_domains if d and d.strip()})}
 
 
 def model_for(agent: str) -> tuple[str, str]:
@@ -125,46 +163,12 @@ def _log(session: Session | None, run: AgentRun) -> None:
     session.commit()
 
 
-def structured_call(
-    *,
-    agent: str,
-    system: str,
-    messages: list[dict],
-    schema: dict,
-    model: str | None = None,
-    effort: str | None = None,
-    max_tokens: int = MAX_TOKENS,
-    session: Session | None = None,
-    post_id: uuid.UUID | None = None,
-    card_id: uuid.UUID | None = None,
-    ref: str | None = None,
-    client: Anthropic | None = None,
-) -> dict:
-    """One agent turn: the reply as the dict `schema` describes. `messages`
-    is the conversation so far (the user turn, and earlier replies with the
-    corrections sent back). `session` logs the run and enforces the monthly
-    ceiling; without one nothing is logged."""
-    default_model, default_effort = model_for(agent)
-    model = model or default_model
-    effort = effort or default_effort
-    if session is not None:
-        check_budget(session)
-    run = AgentRun(agent=agent, post_id=post_id, card_id=card_id, ref=ref, model=model, effort=effort,
-                   started_at=datetime.now(UTC), status="failed")
-    client = client or _client()
-    kwargs = {
-        "model": model,
-        "max_tokens": max_tokens,
-        "system": [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
-        "messages": messages,
-        "output_config": {"format": {"type": "json_schema", "schema": schema}, "effort": effort},
-    }
-    reply = None
+def _create(client: Anthropic, kwargs: dict, agent: str, run: AgentRun, session: Session | None):
+    """One request, with backoff on transient errors."""
     last: Exception | None = None
     for attempt in range(RETRIES):
         try:
-            reply = client.messages.create(**kwargs)
-            break
+            return client.messages.create(**kwargs)
         except _RETRYABLE as e:
             last = e
             if attempt < RETRIES - 1:
@@ -177,17 +181,82 @@ def structured_call(
             run.error = f"{type(e).__name__}: {e}"[:500]
             _log(session, run)
             raise LLMError(f"the {agent} call failed: {run.error}") from e
-    if reply is None:
-        assert last is not None
-        run.error = f"{type(last).__name__} after {RETRIES} tries: {last}"[:500]
-        _log(session, run)
-        raise LLMError(f"the {agent} call failed ({run.error})") from last
+    assert last is not None
+    run.error = f"{type(last).__name__} after {RETRIES} tries: {last}"[:500]
+    _log(session, run)
+    raise LLMTransient(f"the {agent} call failed ({run.error})") from last
 
-    run.input_tokens = reply.usage.input_tokens
-    run.output_tokens = reply.usage.output_tokens
-    run.cache_read_tokens = getattr(reply.usage, "cache_read_input_tokens", None) or 0
-    run.cache_write_tokens = getattr(reply.usage, "cache_creation_input_tokens", None) or 0
-    run.cost_usd = cost_usd(model, reply.usage)
+
+def _add_usage(run: AgentRun, model: str, usage) -> None:
+    run.input_tokens += usage.input_tokens
+    run.output_tokens += usage.output_tokens
+    run.cache_read_tokens += getattr(usage, "cache_read_input_tokens", None) or 0
+    run.cache_write_tokens += getattr(usage, "cache_creation_input_tokens", None) or 0
+    c = cost_usd(model, usage)
+    run.cost_usd = None if c is None else round(float(run.cost_usd or 0) + c, 6)
+
+
+def reply_text(content) -> str:
+    """The structured reply: the text after the last server tool block
+    (with web search, the model may write before it searches)."""
+    blocks = list(content)
+    last_tool = max((i for i, b in enumerate(blocks) if b.type not in ("text", "thinking", "redacted_thinking")),
+                    default=-1)
+    return "".join(b.text for b in blocks[last_tool + 1:] if b.type == "text")
+
+
+def structured_call(
+    *,
+    agent: str,
+    system: str,
+    messages: list[dict],
+    schema: dict,
+    model: str | None = None,
+    effort: str | None = None,
+    max_tokens: int = MAX_TOKENS,
+    tools: list[dict] | None = None,
+    session: Session | None = None,
+    post_id: uuid.UUID | None = None,
+    card_id: uuid.UUID | None = None,
+    ref: str | None = None,
+    client: Anthropic | None = None,
+) -> dict:
+    """One agent turn: the reply as the dict `schema` describes. `messages`
+    is the conversation so far (text and image blocks, earlier replies with
+    the corrections sent back). `tools` adds server tools (the partner's web
+    search). `session` logs the run and enforces the monthly ceiling;
+    without one nothing is logged."""
+    default_model, default_effort = model_for(agent)
+    model = model or default_model
+    effort = effort or default_effort
+    if session is not None:
+        check_budget(session)
+    run = AgentRun(agent=agent, post_id=post_id, card_id=card_id, ref=ref, model=model, effort=effort,
+                   started_at=datetime.now(UTC), status="failed", input_tokens=0, output_tokens=0,
+                   cache_read_tokens=0, cache_write_tokens=0)
+    client = client or _client()
+    kwargs = {
+        "model": model,
+        "max_tokens": max_tokens,
+        "system": [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
+        "messages": list(messages),
+        "output_config": {"format": {"type": "json_schema", "schema": schema}, "effort": effort},
+    }
+    if tools:
+        kwargs["tools"] = tools
+    reply = None
+    for _ in range(MAX_CONTINUATIONS + 1):
+        reply = _create(client, kwargs, agent, run, session)
+        _add_usage(run, model, reply.usage)
+        if reply.stop_reason != "pause_turn":
+            break
+        # The server paused a long tool loop: send its turn back and it resumes.
+        kwargs["messages"] = [*kwargs["messages"], {"role": "assistant", "content": reply.content}]
+    assert reply is not None
+    if reply.stop_reason == "pause_turn":
+        run.error = f"still searching after {MAX_CONTINUATIONS} continuations"
+        _log(session, run)
+        raise LLMError(f"the {agent} kept searching and never answered; try again with a narrower question")
     if reply.stop_reason == "refusal":
         run.status, run.error = "refused", "the model declined this request"
         _log(session, run)
@@ -195,8 +264,8 @@ def structured_call(
     if reply.stop_reason == "max_tokens":
         run.error = f"reply cut off at {max_tokens} tokens"
         _log(session, run)
-        raise LLMError(f"the {agent}'s reply was cut off at {max_tokens} tokens; the source is too long for one post")
-    text = next((b.text for b in reply.content if b.type == "text"), "")
+        raise LLMError(f"the {agent}'s reply was cut off at {max_tokens} tokens; the source is too long for one turn")
+    text = reply_text(reply.content)
     try:
         out = json.loads(text)
     except ValueError as e:

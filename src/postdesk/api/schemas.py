@@ -139,3 +139,144 @@ class WhoAmI(BaseModel):
     token_expires: str
     quota_used: int
     quota_total: int
+
+
+# ---------------------------------------------------------------- the board
+
+
+class CardCreate(BaseModel):
+    """An idea for the board. `column` Inbox waits for you; Planned starts
+    the partner. `link` alone fetches the page (the url source)."""
+
+    title: str = ""
+    body_md: str = ""
+    link: str | None = None
+    kind: Literal["post", "story"] = "post"
+    column: Literal["Inbox", "Planned"] = "Inbox"
+
+
+class ManualSource(BaseModel):
+    """`POST /api/sources/manual`: a title and text, or just a link."""
+
+    title: str = ""
+    text: str = ""
+    link: str | None = None
+    template: str | None = None
+
+
+class CardMove(BaseModel):
+    column: str
+    note: str | None = None
+    # For Scheduled: "tomorrow 18:00", "fri 7:30", an ISO time; empty for the recommended time.
+    when: str | None = None
+
+
+class CommentIn(BaseModel):
+    body_md: str = Field(min_length=1)
+
+
+class CardRow(BaseModel):
+    id: str
+    kind: str
+    column: str
+    title: str
+    source_ref: str | None
+    thumbnail_url: str | None
+    stuck_reason: str | None
+    verdict: str | None
+    busy: str | None  # the agent working on it now, or queued
+    closed: bool
+    created_by: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class CommentOut(BaseModel):
+    id: str
+    author: str
+    body_md: str
+    attachments: list[dict]
+    created_at: datetime
+
+
+class EventOut(BaseModel):
+    id: str
+    from_column: str | None
+    to_column: str
+    actor: str
+    reason: str | None
+    refused: bool
+    at: datetime
+
+
+class DraftOut(BaseModel):
+    id: str
+    kind: str
+    status: str
+    title: str
+    caption: str
+    slides: list[Slide]
+    publish_at: datetime | None
+    permalink: str | None
+    error: str | None
+
+
+class RunOut(BaseModel):
+    id: str
+    agent: str
+    card_id: str | None
+    model: str
+    input_tokens: int
+    output_tokens: int
+    cost_usd: float | None
+    status: str
+    error: str | None
+    started_at: datetime
+
+
+class JobOut(BaseModel):
+    id: str
+    kind: str
+    card_id: str | None
+    status: str
+    attempts: int
+    run_after: datetime
+    error: str | None
+
+
+class CardDetail(CardRow):
+    body_md: str
+    facts: dict | None
+    brief_md: str | None
+    guidance: str | None
+    plan: dict
+    images: list[dict]
+    review: dict | None
+    review_round: int
+    thread: list[CommentOut]
+    events: list[EventOut]
+    drafts: list[DraftOut]
+    runs: list[RunOut]
+    spend_usd: float
+    jobs: list[JobOut]
+    recommended_at: datetime | None
+    gates: list[str]
+
+
+class RunsOut(BaseModel):
+    runs: list[RunOut]
+    month_usd: float
+    ceiling_usd: float
+
+
+class ScanOut(BaseModel):
+    filed: list[str]
+    seen: int
+    deferred: int
+    errors: list[str]
+
+
+class SourceOut(BaseModel):
+    key: str
+    type: str
+    options: dict

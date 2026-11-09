@@ -1,0 +1,60 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["reply", "posts"],
+  "properties": {
+    "reply": {
+      "type": "string",
+      "description": "One or two sentences for the thread: what you changed and why. If a note cannot be fixed with words, say so here."
+    },
+    "posts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "caption", "alt_texts", "slides"],
+        "properties": {
+          "id": {"type": "string", "description": "The draft's id from the prompt."},
+          "caption": {"type": ["string", "null"], "description": "The whole new caption, or null to keep it. Always null for a Story."},
+          "alt_texts": {
+            "type": ["array", "null"],
+            "items": {"type": "string"},
+            "description": "Every slide's alt text in order (the same count as the slides), or null to keep them."
+          },
+          "slides": {
+            "type": ["array", "null"],
+            "description": "The slides whose words change, or null.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["index", "fields"],
+              "properties": {
+                "index": {"type": "integer", "description": "0-based: slide 1 is index 0."},
+                "fields": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "description": "Only the words that change, each one of the slide's editable words; an empty string drops an optional one.",
+                  "properties": {
+                    "kicker": {"type": "string"},
+                    "kicker_sub": {"type": "string"},
+                    "headline": {"type": "string"},
+                    "headline_em": {"type": "string"},
+                    "sub": {"type": "string"},
+                    "body": {"type": "string"},
+                    "figure": {"type": "string"},
+                    "figure_sub": {"type": "string"},
+                    "note": {"type": "string"},
+                    "line1": {"type": "string"},
+                    "line2": {"type": "string"},
+                    "line": {"type": "string"},
+                    "text": {"type": "string"}
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

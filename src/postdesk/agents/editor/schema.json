@@ -1,0 +1,49 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["verdict", "summary", "checks", "notes"],
+  "properties": {
+    "verdict": {
+      "type": "string",
+      "enum": ["pass", "revise", "hold"],
+      "description": "pass: ready for the admin. revise: only words need changing (caption, alt text, a slide's words). hold: anything words cannot fix."
+    },
+    "summary": {
+      "type": "string",
+      "description": "Two or three plain sentences for the admin: what the post is, and the verdict's reason."
+    },
+    "checks": {
+      "type": "array",
+      "description": "One entry per check, each exactly once.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["check", "ok", "note"],
+        "properties": {
+          "check": {"type": "string", "enum": ["voice", "facts", "rights", "ai-label", "accessibility", "links"]},
+          "ok": {"type": "boolean"},
+          "note": {"type": "string", "description": "What you checked and what you found, briefly."}
+        }
+      }
+    },
+    "notes": {
+      "type": "array",
+      "description": "Every change needed. Empty on pass.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["target", "slide", "problem", "fix"],
+        "properties": {
+          "target": {
+            "type": "string",
+            "enum": ["caption", "alt_text", "slide_text", "slide", "rights", "other"],
+            "description": "slide_text: the words on a slide (the revision turn fixes them). slide: anything else on a slide (its picture, source line or layout), which needs a person."
+          },
+          "slide": {"type": ["integer", "null"], "description": "1-based slide number, when the note is about one slide or its alt text."},
+          "problem": {"type": "string"},
+          "fix": {"type": ["string", "null"], "description": "The change you would make; null if it needs a person."}
+        }
+      }
+    }
+  }
+}

@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from postdesk import __version__
-from postdesk.api.routers import account, assets, auth, media, posts
+from postdesk.api.routers import account, assets, auth, cards, media, posts
 
 STATIC = Path(__file__).resolve().parent / "static"
 
@@ -25,23 +25,29 @@ The Docker image has it built in.</p>
 </body>"""
 
 
-def create_app(*, scheduler: bool = False) -> FastAPI:
+def create_app(*, scheduler: bool = False, worker: bool = False) -> FastAPI:
     """`scheduler=True` (what `postdesk serve` passes) runs the publish loop
-    in a background thread for the life of the app."""
+    in a background thread for the life of the app; `worker=True` runs the
+    agents' job runner (and the scout and the board sync) beside it."""
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         stop = threading.Event()
-        thread = None
+        threads = []
         if scheduler:
             from postdesk.scheduler import loop
 
-            thread = threading.Thread(target=loop, args=(stop,), name="postdesk-scheduler", daemon=True)
-            thread.start()
+            threads.append(threading.Thread(target=loop, args=(stop,), name="postdesk-scheduler", daemon=True))
+        if worker:
+            from postdesk.jobs import loop as work
+
+            threads.append(threading.Thread(target=work, args=(stop,), name="postdesk-worker", daemon=True))
+        for t in threads:
+            t.start()
         yield
         stop.set()
-        if thread is not None:
-            thread.join(timeout=5)
+        for t in threads:
+            t.join(timeout=5)
 
     app = FastAPI(title="postdesk", version=__version__, lifespan=lifespan, docs_url="/api/docs",
                   openapi_url="/api/openapi.json", redoc_url=None)
@@ -50,6 +56,7 @@ def create_app(*, scheduler: bool = False) -> FastAPI:
     app.include_router(assets.router)
     app.include_router(account.router)
     app.include_router(media.router)
+    app.include_router(cards.router)
 
     @app.get("/api/health", include_in_schema=False)
     def health() -> dict:

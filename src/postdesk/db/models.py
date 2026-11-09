@@ -1,6 +1,6 @@
 """
-The tables (docs/roadmap.md): M0's queue and storage, M1's `agent_run`.
-Later milestones add `card`, `card_comment`, `card_event` and `job`.
+The tables (docs/roadmap.md): M0's queue and storage, M1's `agent_run`,
+M2's board (`card`, `card_comment`, `card_event`) and its `job` queue.
 """
 
 from __future__ import annotations
@@ -8,7 +8,19 @@ from __future__ import annotations
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import Date, DateTime, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import (
+    Boolean,
+    Date,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -84,7 +96,8 @@ class SocialPost(Base):
     slides: Mapped[list] = mapped_column(JSONType, nullable=False)  # [{"asset_id", "alt_text", "spec"?}]
     media: Mapped[dict | None] = mapped_column(JSONType)  # a reel's video record (not in M0)
     # The card this post belongs to (M2). Null for posts made by hand.
-    card_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), index=True)
+    card_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("card.id", ondelete="SET NULL"),
+                                                      index=True)
     source_ref: Mapped[str | None] = mapped_column(String)  # "rss:<guid>", "manual:intro", ...
     publish_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     approved_by: Mapped[str | None] = mapped_column(String)
@@ -151,4 +164,94 @@ class AgentRun(Base):
     status: Mapped[str] = mapped_column(String, nullable=False, default="ok")  # ok | failed | refused
     error: Mapped[str | None] = mapped_column(Text)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class Card(Base):
+    """One post on the board (board/cards.py): a carousel and its Story share
+    a card. `column` is where it stands (board.cards.COLUMNS); the two gate
+    columns, Approved and Scheduled, are set only by the admin. `fingerprint`
+    is what the scout dedupes on (`post:<source>:<ref>`). `facts` is the
+    source's `Facts` as filed, so the partner, the maker and the editor read
+    the same thing; `plan` is the brief's machine half (the template, the
+    images it uses, a custom slide plan)."""
+
+    __tablename__ = "card"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    kind: Mapped[str] = mapped_column(String, nullable=False, default="post")  # post | story
+    column: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String, nullable=False)
+    body_md: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    source_ref: Mapped[str | None] = mapped_column(String, index=True)  # "rss:<guid>", "url:<url>", "manual:<id>"
+    fingerprint: Mapped[str | None] = mapped_column(String, unique=True)
+    facts: Mapped[dict | None] = mapped_column(JSONType)
+    brief_md: Mapped[str | None] = mapped_column(Text)
+    guidance: Mapped[str | None] = mapped_column(Text)
+    plan: Mapped[dict] = mapped_column(JSONType, nullable=False, default=dict)
+    labels: Mapped[list] = mapped_column(JSONType, nullable=False, default=list)
+    review_round: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    review: Mapped[dict | None] = mapped_column(JSONType)  # the editor's last verdict, checks and notes
+    stuck_reason: Mapped[str | None] = mapped_column(Text)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_by: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class CardComment(Base):
+    """The thread the partner talks in. `author`: user | partner | editor |
+    maker | system. `attachments`: [{asset_id, url, filename, note}], images
+    a person attached for the partner to read."""
+
+    __tablename__ = "card_comment"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    card_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("card.id", ondelete="CASCADE"),
+                                               nullable=False, index=True)
+    author: Mapped[str] = mapped_column(String, nullable=False)
+    body_md: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    attachments: Mapped[list] = mapped_column(JSONType, nullable=False, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class CardEvent(Base):
+    """Every move of a card, and every refused one (`refused`), with who
+    asked and why: the audit of the two human gates."""
+
+    __tablename__ = "card_event"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    card_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("card.id", ondelete="CASCADE"),
+                                               nullable=False, index=True)
+    from_column: Mapped[str | None] = mapped_column(String)
+    to_column: Mapped[str] = mapped_column(String, nullable=False)
+    actor: Mapped[str] = mapped_column(String, nullable=False)
+    reason: Mapped[str | None] = mapped_column(Text)
+    refused: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+
+
+class Job(Base):
+    """A unit of agent work for the runner (jobs.py): `kind` partner | make |
+    review | revise. `status`: queued -> running -> done | failed. At most
+    one running job per card, by a partial unique index."""
+
+    __tablename__ = "job"
+    __table_args__ = (
+        Index("uq_job_running_card", "card_id", unique=True, postgresql_where=text("status = 'running'")),
+        Index("ix_job_queue", "status", "run_after"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    kind: Mapped[str] = mapped_column(String, nullable=False)
+    card_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("card.id", ondelete="CASCADE"),
+                                                      index=True)
+    payload: Mapped[dict] = mapped_column(JSONType, nullable=False, default=dict)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="queued")
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    run_after: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
