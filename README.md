@@ -3,9 +3,13 @@
 An Instagram manager you run yourself, driven from Telegram, with Claude
 writing the posts and you approving every one.
 
-> **Status: early.** The scheduler (queue, approval, publishing) is being
-> built first; the planner, maker and editor follow. Watch the
-> [milestones](docs/roadmap.md). Nothing here posts anything yet.
+> **Status: the scheduler works.** You can queue a hand-made carousel or
+> Story, approve it with a time in the web page, and it posts through
+> Instagram's official API at that time. The planner, the maker (slides,
+> captions, alt text written by Claude), the editor pass and the Telegram
+> bot are the next [milestones](docs/roadmap.md). Until they land, the
+> sections below marked *coming* describe where this is going, not what
+> it does today.
 
 You tell it what you post about: a blog feed, a folder of Markdown, or a
 link you send it. It proposes a post as a card. Claude writes a brief and
@@ -24,13 +28,13 @@ scraping, no auto-liking, no DMs, no follower games.
 - An **Instagram professional account** (Business or Creator) linked to a
   **Facebook Page**. Instagram's publishing API only works for these.
 - A **Meta developer app** (free). The setup page below walks you through it.
-- An **Anthropic API key** for Claude. [Get one here](https://platform.claude.com/).
-  A typical post costs a few cents; a busy month is a few dollars.
-- A **Telegram account**. You will make a bot in two minutes.
 - Somewhere to run it: a laptop that stays on, a small VPS, or a hosting
   service. It needs **Docker**. Posting requires the machine to be
   reachable from the internet, or an S3-compatible bucket; the setup
   explains both.
+- *Coming:* an **Anthropic API key** for Claude, once the writer lands
+  ([get one here](https://platform.claude.com/); a typical post costs a
+  few cents), and a **Telegram account** for the daily chat.
 
 ## Install in 15 minutes
 
@@ -38,26 +42,17 @@ scraping, no auto-liking, no DMs, no follower games.
 git clone https://github.com/OKASEN-Technology/postdesk
 cd postdesk
 cp .env.example .env
+cp examples/postdesk.toml postdesk.toml
 ```
 
-Open `.env` and fill in two lines for now:
-
-```
-ANTHROPIC_API_KEY=sk-ant-...
-TELEGRAM_BOT_TOKEN=123456:ABC...     # from @BotFather: /newbot, then copy the token
-```
-
-Start it:
+Open `postdesk.toml` and set your timezone and handle under `[account]`;
+the rest can wait. `.env` can stay as it is for now. Start it:
 
 ```bash
 docker compose up -d
 ```
 
-Open http://localhost:8080 and set a password. Then in Telegram, open your
-new bot and send `/start`. It replies with a code; paste the code into
-**Settings → Telegram** in the web page. From now on the bot talks to you.
-
-Then run the checklist:
+Open http://localhost:8080 and set a password. Then run the checklist:
 
 ```bash
 docker compose exec app postdesk doctor
@@ -69,13 +64,13 @@ Instagram.
 ## Connect Instagram
 
 This is the only fiddly part, and it is Meta's, not ours. Follow
-[docs/instagram-setup.md](docs/instagram-setup.md); it has a screenshot
-per step. In short:
+[docs/instagram-setup.md](docs/instagram-setup.md). In short:
 
 1. Create an app at developers.facebook.com, type **Business**, and add the
    **Instagram** product with **API setup with Facebook login**.
-2. In the Graph API Explorer, generate a user token with the permissions
-   the page lists, then extend it to a 60-day token.
+2. In the Graph API Explorer, generate a user token with the five
+   permissions the page lists, ticking both your Page and your Instagram
+   account in the popup.
 3. Put `META_APP_ID`, `META_APP_SECRET` and `INSTAGRAM_ACCESS_TOKEN` in
    `.env`, then run:
 
@@ -84,74 +79,86 @@ per step. In short:
    ```
 
    It prints `INSTAGRAM_PAGE_TOKEN` and `INSTAGRAM_USER_ID`. Put those in
-   `.env`; they do not expire, and the 60-day token is no longer needed.
+   `.env` and `docker compose up -d` again; they do not expire, and the
+   token from step 2 is no longer needed.
 4. `docker compose exec app postdesk instagram whoami` shows your account
    and your daily publishing quota. You are connected.
 
+The last thing `doctor` checks is that Instagram can fetch your images:
+your machine has to be reachable at `PUBLIC_BASE_URL`, or you give it a
+bucket. [docs/deploy.md](docs/deploy.md) has both.
+
 ## Make your first post
 
-Send the bot a link:
+Make the slides yourself for now (1080×1350 PNG or JPEG for the feed,
+1080×1920 for a Story), write the caption in a text file with the alt
+text after a `---` line:
 
 ```
-/new https://yourblog.com/some-article
+Three loaves, one weekend.
+
+The recipe is at the link in bio.
+
+#homebaking #sourdough
+
+---
+ALT TEXT
+1: A sourdough loaf on a board, scored in a leaf pattern.
+2: The crumb, cut open.
 ```
 
-Within a minute it sends you a brief: the angle, the hook, what each slide
-says, which numbers it will use, and any picture it found with its credit.
-Reply to that message to change anything ("lead with the second point",
-"drop the photo"); it answers and updates the brief. When it looks right,
-tap **Approve**.
+Queue it:
 
-A few minutes later it sends the slides, the caption and the editor's
-checks, with a suggested time. Tap **Schedule**, or type
-`/schedule tomorrow 18:00`. At that time it posts, and sends you the link.
+```bash
+docker compose exec app postdesk queue slides/01.png slides/02.png --caption caption.txt --title "Weekend loaves"
+```
+
+(With Docker, put the files somewhere the container can see them, or use
+the web page's **New post** form, which does the same thing.) It checks
+the images and the caption against Instagram's limits, stores them, and
+files a draft with a recommended time: the next free evening slot from
+`[schedule]` in `postdesk.toml`, in your timezone.
+
+Open the queue at http://localhost:8080. Check the slides, fix the alt
+text, keep or change the time, and tap **Approve & schedule**. At that time
+the publisher posts it and the queue shows the link. A post you have
+approved cannot be edited; unapprove it first.
+
+To post something right now, by hand, there is also:
+
+```bash
+docker compose exec app postdesk post slides/01.png slides/02.png --caption caption.txt            # a dry run
+docker compose exec app postdesk post slides/01.png slides/02.png --caption caption.txt --publish  # posts it
+```
 
 ## Running it every day
 
-Tell it where your posts come from in `postdesk.toml`:
+The publisher runs inside the app every 15 minutes within the hours you
+set (`publisher_hours` in `postdesk.toml`, 06:00 to 21:00 by default), and
+once a day collects how each recent post did. If you would rather run it
+from your own cron, `docker compose exec app postdesk cron` is one pass.
 
-```toml
-[sources]
-rss = { url = "https://yourblog.com/feed.xml" }
-```
-
-Every couple of hours it checks for new items and files a card for each.
-Your day then looks like this in Telegram:
-
-| The bot says | You do |
-|---|---|
-| "New post to plan: …" | nothing yet |
-| the brief, with **Approve · Rethink · Hold** | reply with changes, or tap Approve |
-| the slides and caption, with **Schedule · Pick a time · Rethink** | tap Schedule |
-| "Scheduled for Thu 18:00" | nothing; `/unschedule` if you change your mind |
-| the link, once it is live | nothing |
-| the numbers, a week later | nothing |
-| the morning digest | look at what is waiting on you |
-
-Commands: `/new <text or link>`, `/board`, `/queue`, `/status`,
-`/schedule [time]`, `/unschedule`, `/rethink <note>`, `/hold`, `/pause`,
-`/resume`. Reply to any card's message to talk to the planner about it;
-send a photo in reply to offer it a picture, and say where it is from.
+*Coming:* the daily loop in Telegram. You will tell it where your posts
+come from (`[sources]` in `postdesk.toml`), it will file a card for each
+new item, write a brief and talk it over with you, make the slides, and
+send you the preview with a **Schedule** button. The web page stays for
+editing a caption by hand and for the settings.
 
 ## Make it yours
 
-- **Voice.** Write `voice.md`: how you sound, what you never say. Claude
-  reads it when writing and again when checking. There is an example in
-  [`examples/voice.md`](examples/voice.md).
-- **Look.** Pick a theme in `postdesk.toml`, or copy `renderer/themes/default`
-  and change the colours, fonts and logo. `postdesk render --spec
-  examples/slide.json --out test.jpg` shows you a slide.
-- **Hashtags, timing, how many a day.** All in
-  [`examples/postdesk.toml`](examples/postdesk.toml), with comments.
-- **What a post looks like.** Templates in `templates/` say which slides a
-  post has and what each carries. Start from `article.yaml`.
-- **Which model.** Defaults are in `[llm]`. Set a monthly ceiling there;
-  when it is reached the agents stop and the bot tells you.
+- **Timing, how many a day, hashtag limits.** `[schedule]` and `[voice]`
+  in [`examples/postdesk.toml`](examples/postdesk.toml), with comments.
+  Every time is in your timezone.
+- **The queue by hand.** `postdesk queue`, `postdesk suggest-times`
+  (recommended times for drafts that have none), and the HTTP API at
+  `/api/docs`.
+- *Coming:* your voice file ([`examples/voice.md`](examples/voice.md)),
+  your theme, post templates, model choice and a monthly spend ceiling.
 
 ## What it will never do
 
 - Post without your approval of that exact post. An approved post cannot be
-  edited; unschedule it first.
+  edited; unapprove it first.
 - Put a number in a post that is not in your source.
 - Use a picture without recording where it came from and crediting it on
   the slide and in the caption.
@@ -161,23 +168,23 @@ send a photo in reply to offer it a picture, and say where it is from.
 
 ## Hosting it
 
-It is two small services and a database. [docs/deploy.md](docs/deploy.md)
-has recipes for a VPS with Docker Compose, Fly.io, Railway and Render, and
-explains the one requirement Instagram imposes: your slide images must be
-fetchable from a public URL, which means either your server is reachable
-from the internet or you give it an S3-compatible bucket (`STORAGE_S3_*` in
-`.env`). `postdesk doctor` checks this for you.
+It is one small service and a database (the slide renderer joins in M1).
+[docs/deploy.md](docs/deploy.md) has recipes for a VPS with Docker
+Compose, Fly.io, Railway and Render, and explains the one requirement
+Instagram imposes: your slide images must be fetchable from a public URL,
+which means either your server is reachable from the internet or you give
+it an S3-compatible bucket (`STORAGE_S3_*` in `.env`). `postdesk doctor`
+checks this for you.
 
 ## When something goes wrong
 
-`/status` in Telegram, or `postdesk doctor`, first. Then
+`postdesk doctor` first. Then
 [docs/troubleshooting.md](docs/troubleshooting.md): token expired, post
-stuck in "publishing", renderer not running, the quota, and what each card
-state means.
+stuck in "publishing", Instagram cannot fetch an image, the quota, and what
+each state means.
 
 ## Contributing, licence, who made this
 
-Apache-2.0. Themes, sources and image sources are the easiest places to
-contribute; see [CONTRIBUTING.md](CONTRIBUTING.md). Built by
+Apache-2.0. See [CONTRIBUTING.md](CONTRIBUTING.md). Built by
 [OKASEN Technology](https://github.com/OKASEN-Technology) for our own
 account and opened up because the setup was the hard part.

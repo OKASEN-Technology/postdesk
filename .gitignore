@@ -218,3 +218,11 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Local config and data
+postdesk.toml
+var/
+src/postdesk/static/
+web/node_modules/
+web/tsconfig.tsbuildinfo
+.claude/

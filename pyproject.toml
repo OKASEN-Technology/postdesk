@@ -1,6 +1,6 @@
 [project]
 name = "postdesk"
-version = "0.0.1"
+version = "0.1.0"
 description = "A self-hosted Instagram manager you run from Telegram: Claude proposes and makes the posts, you approve every one, it schedules and publishes."
 readme = "README.md"
 license = "Apache-2.0"
@@ -47,10 +47,17 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/postdesk"]
+# The built web UI is gitignored but ships in the wheel (web/README.md).
+artifacts = ["src/postdesk/static/**"]
 
 [tool.ruff]
-line-length = 110
+line-length = 120
 target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "RUF", "W"]
+# Depends(...) / typer.Option(...) in defaults is how FastAPI and Typer work.
+ignore = ["B008", "RUF001", "RUF002", "RUF003"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -12,6 +12,8 @@ story_slot = "18:15"       # a Story goes 15 minutes after its post, or here on 
 max_feed_per_day = 1
 max_story_per_day = 1
 min_lead_hours = 2         # never suggest a time closer than this
+story_frame_gap_minutes = 2            # frames of a multi-frame Story go out this far apart
+max_per_run = 3            # at most this many posts per publisher pass, even if more are due
 publisher_hours = ["06:00", "21:00"]   # the publisher only posts between these
 
 [voice]
