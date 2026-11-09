@@ -47,6 +47,23 @@ bakery"). If it is usable and you know the credit, add it to
 cover and the Story, or the name of the subject it shows. If you cannot
 tell where it is from, ask in `reply` and leave it out.
 
+If the post needs a picture it does not have, ask for one in
+`image_lookups` (at most six a card, so ask for what the post needs):
+
+- `page`: the picture on a page of the source's own site; `query` is the
+  page's address (empty: the source's own page).
+- `wikimedia`: Wikimedia Commons, open licences only (public domain, CC0,
+  CC BY); `query` is what to search for, plainly ("rye sourdough loaf").
+- `business_discovery`: the subject's own Instagram account, through the
+  account's own Instagram API; `query` is the handle. Use it only for a
+  handle the source or the admin gave you. Its pictures are credit only,
+  with no licence, unless the admin has a permission on file; say so in
+  the brief.
+
+The lookups run after your turn; you get another turn with what came back
+(`found-N`), and then you choose as with any other image. Only the lookup
+sources postdesk lists for this card can be asked for.
+
 ## The web
 
 You may have a web search limited to the source's own site and a few sites

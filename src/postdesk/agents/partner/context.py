@@ -61,6 +61,16 @@ def tools(card: Card) -> list[dict] | None:
     return [llm.web_search_tool(domains, max_uses=config.partner.max_searches)]
 
 
+def lookups_line(card: Card) -> str:
+    from postdesk import images
+
+    usable = [s for s in images.enabled() if s in images.LOOKUP_SOURCES]
+    left = images.MAX_LOOKUPS - int((card.plan or {}).get("lookups") or 0)
+    if not usable or left <= 0:
+        return "Image lookups: none available for this card."
+    return f"Image lookups: {', '.join(usable)}; {left} left on this card."
+
+
 def user_content(session: Session, card: Card, candidates: list[dict], reason: str | None) -> list[dict]:
     text = [
         f"Card: {card.title} (a {card.kind}), in {card.column}.",
@@ -81,6 +91,7 @@ def user_content(session: Session, card: Card, candidates: list[dict], reason: s
         agents.thread_text(session, card),
         "",
         f"Web search: {', '.join(allowed_domains(card))} only." if tools(card) else "Web search: off for this card.",
+        lookups_line(card),
         "",
         "The images the post may use follow, each with its key." if candidates else
         "There are no images for this post: the slides use the image-free design.",
@@ -89,6 +100,7 @@ def user_content(session: Session, card: Card, candidates: list[dict], reason: s
     for c in candidates:
         label = (f"{c['key']}: " + (f"for {c['for']}; " if c.get("for") else "")
                  + f"credit: {c.get('credit') or '(none yet)'}; licence: {c.get('licence') or 'no licence'}; "
+                 + ("a permission is on file; " if c.get("permission_id") else "")
                  + f"from {c['source']}" + (f"; the admin wrote: {c['note']}" if c.get("note") else ""))
         img = agents.image_for(c, session)
         blocks.append({"type": "text", "text": label + ("" if img else " (could not be loaded)")})

@@ -93,9 +93,8 @@ def test_a_transient_failure_is_retried_with_backoff_then_gives_up(session, monk
 @pytest.mark.parametrize("error, why", [
     (llm.LLMError("Claude declined to answer (refusal)"), "the partner's turn failed: Claude declined"),
     (llm.LLMError("the reply was cut off at max_tokens"), "the partner's turn failed: the reply was cut off"),
-    (llm.BudgetExceeded("this month's ceiling of $30.00 is spent"), "the partner's turn failed: this month's"),
 ])
-def test_a_refusal_a_cut_off_reply_or_the_ceiling_holds_the_card_without_a_retry(session, error, why):
+def test_a_refusal_or_a_cut_off_reply_holds_the_card_without_a_retry(session, error, why):
     c = kit.card(session)
     jobs.enqueue(session, "partner", c.id)
     calls = []
@@ -109,6 +108,20 @@ def test_a_refusal_a_cut_off_reply_or_the_ceiling_holds_the_card_without_a_retry
     session.refresh(c)
     assert c.column == "On hold" and c.stuck_reason.startswith(why)
     assert cards.thread(session, c)[-1].body_md.startswith("On hold:")
+
+
+def test_the_ceiling_reached_mid_job_queues_it_again_without_holding_the_card(session):
+    c = kit.card(session)
+    jobs.enqueue(session, "partner", c.id)
+
+    def over(**kw):
+        raise llm.BudgetExceeded("this month's agent runs have cost $30.00, over the $30.00 ceiling")
+
+    done = jobs.run_pending(session, kit.deps(partner=over), log=_quiet)
+    assert [j.status for j in done] == ["queued"] and done[0].attempts == 0
+    assert done[0].run_after > jobs.now_utc()
+    session.refresh(c)
+    assert c.column == "Planned" and c.stuck_reason is None
 
 
 def test_the_real_call_refuses_on_a_refusal_or_max_tokens(monkeypatch):

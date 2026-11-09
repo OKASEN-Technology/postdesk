@@ -1,7 +1,7 @@
 {
   "type": "object",
   "additionalProperties": false,
-  "required": ["column", "reply", "brief", "guidance", "use_images", "attached_images", "post"],
+  "required": ["column", "reply", "brief", "guidance", "use_images", "attached_images", "image_lookups", "post"],
   "properties": {
     "column": {
       "type": "string",
@@ -37,6 +37,20 @@
           "for": {"type": "string", "description": "hero (the cover and the Story), or the name of the subject it shows."},
           "credit": {"type": "string", "description": "The credit printed on the slide, e.g. 'Photo: Jo Baker'."},
           "what": {"type": "string", "description": "What it shows, in a few plain words, for the alt text."}
+        }
+      }
+    },
+    "image_lookups": {
+      "type": "array",
+      "description": "Pictures to look for after this turn (at most six a card); what came back is shown on your next turn as found-N. Empty when the post has what it needs.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["source", "subject", "query"],
+        "properties": {
+          "source": {"type": "string", "enum": ["page", "wikimedia", "business_discovery"]},
+          "subject": {"type": "string", "description": "Who or what the picture is of: hero, or a subject's name."},
+          "query": {"type": "string", "description": "page: the page's address (empty for the source's own); wikimedia: what to search for; business_discovery: the Instagram handle."}
         }
       }
     },

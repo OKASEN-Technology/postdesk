@@ -16,9 +16,16 @@ worker` on its own.
   Anything else, and every refusal or reply cut off, puts the card On hold
   with the reason, once, without spending again.
 
+No job starts while the agents are stopped (control.py): paused with
+/pause, or this month's spend at `[llm].monthly_usd`. The jobs wait in the
+queue; nothing is put On hold for it. A job that reaches the ceiling
+mid-way (the check before each Claude call) goes back to the queue the
+same way.
+
 Between jobs the worker does the board's housekeeping (`housekeeping`):
-the queue-to-board sync, filing hand-made drafts, and the scout on its
-schedule.
+the settings screen's edits, the queue-to-board sync, filing hand-made
+drafts, the one-way notifiers, and the scout on its schedule (not while
+paused).
 """
 
 from __future__ import annotations
@@ -45,6 +52,8 @@ BACKOFF_S = 30
 STALE = timedelta(minutes=30)
 POLL_S = 2.0
 HOUSEKEEPING_S = 60.0
+# A job stopped by the spend ceiling is looked at again after this long.
+CEILING_WAIT = timedelta(hours=1)
 
 
 class Transient(RuntimeError):
@@ -60,7 +69,9 @@ class Deps:
     revision_call: Callable | None = None
     maker_call: Callable | None = None
     renderer: object | None = None
-    fetch: httpx.Client | None = None  # for sources (rss, url)
+    fetch: httpx.Client | None = None  # for sources (rss, url) and image lookups
+    graph: object | None = None  # instagram.Graph, for business_discovery
+    pick_call: Callable | None = None  # business_discovery's choice
 
 
 def now_utc() -> datetime:
@@ -142,7 +153,8 @@ def _handlers() -> dict[str, Callable]:
     from postdesk.board import transitions
 
     return {
-        "partner": lambda s, card, p, d: partner.turn(s, card, reason=p.get("reason"), call=d.partner_call),
+        "partner": lambda s, card, p, d: partner.turn(s, card, reason=p.get("reason"), call=d.partner_call,
+                                                      fetch=d.fetch, graph=d.graph, pick=d.pick_call),
         "make": lambda s, card, p, d: transitions.make(s, card, call=d.maker_call, renderer=d.renderer),
         "review": lambda s, card, p, d: editor.turn(s, card, call=d.editor_call),
         "revise": lambda s, card, p, d: revision.turn(s, card, p, call=d.revision_call, renderer=d.renderer),
@@ -169,6 +181,18 @@ def run(session: Session, job: Job, deps: Deps | None = None, *, log=print) -> J
         if card is None:
             raise RuntimeError("the job's card is gone")
         _handlers()[job.kind](session, card, job.payload or {}, deps)
+    except llm.BudgetExceeded as e:
+        # Not the card's fault: back in the queue, without spending a try.
+        session.rollback()
+        from postdesk import control
+
+        job.status, job.error = "queued", str(e)[:2000]
+        job.attempts = max(0, job.attempts - 1)
+        job.run_after = now_utc() + CEILING_WAIT
+        session.commit()
+        control.ceiling_reached(session)
+        log(f"job {job.kind} for card {job.card_id}: {e}")
+        return job
     except Exception as e:
         session.rollback()
         card = session.get(Card, job.card_id) if job.card_id else None
@@ -191,8 +215,15 @@ def run(session: Session, job: Job, deps: Deps | None = None, *, log=print) -> J
 
 
 def run_pending(session: Session, deps: Deps | None = None, *, limit: int = 100, log=print) -> list[Job]:
-    """Work the queue until nothing is due (tests, and `postdesk worker --once`)."""
+    """Work the queue until nothing is due (tests, and `postdesk worker --once`).
+    Nothing runs while the agents are stopped (control.stopped)."""
+    from postdesk import control
+
     done = []
+    why = control.stopped(session)
+    if why:
+        log(f"worker: no jobs run: {why}")
+        return done
     for _ in range(limit):
         job = claim(session)
         if job is None:
@@ -202,15 +233,20 @@ def run_pending(session: Session, deps: Deps | None = None, *, limit: int = 100,
 
 
 def housekeeping(session: Session, deps: Deps | None = None, *, log=print, scout: bool = True) -> None:
-    """The board's periodic work: the queue-to-board sync, filing hand-made
-    drafts, the scout when it is due."""
+    """The board's periodic work: the settings screen's edits, the
+    queue-to-board sync, filing hand-made drafts, the one-way notifiers, the
+    scout when it is due (and the agents are not paused)."""
+    from postdesk import control, notify, store
     from postdesk.board import scout as scout_mod
     from postdesk.board import sync
 
-    for step, fn in (("sync", lambda: sync.sync(session, log=log)),
+    deps = deps or Deps()
+    for step, fn in (("settings", lambda: store.refresh_config(session, log=log)),
+                     ("sync", lambda: sync.sync(session, log=log)),
                      ("file drafts", lambda: sync.file_drafts(session, log=log)),
-                     ("scout", lambda: scout_mod.run_if_due(session, client=(deps or Deps()).fetch, log=log)
-                      if scout else None)):
+                     ("notify", lambda: notify.dispatch_one_way(session, client=deps.fetch, log=log)),
+                     ("scout", lambda: scout_mod.run_if_due(session, client=deps.fetch, log=log)
+                      if scout and control.paused(session) is None else None)):
         try:
             fn()
         except Exception as e:  # one step failing must not stop the others or the worker
@@ -226,7 +262,10 @@ def loop(stop: threading.Event, *, deps: Deps | None = None, log=print, poll_s: 
         n = reset_stale(session)
         if n:
             log(f"worker: {n} job(s) from a stopped worker queued again")
+    from postdesk import control
+
     last = 0.0
+    said = None
     while not stop.is_set():
         ran = False
         try:
@@ -234,7 +273,11 @@ def loop(stop: threading.Event, *, deps: Deps | None = None, log=print, poll_s: 
                 if time.monotonic() - last >= housekeeping_s:
                     housekeeping(session, deps, log=log, scout=scout)
                     last = time.monotonic()
-                job = claim(session)
+                why = control.stopped(session)
+                if why != said and why:
+                    log(f"worker: agents stopped: {why}")
+                said = why
+                job = None if why else claim(session)
                 if job is not None:
                     run(session, job, deps, log=log)
                     ran = True

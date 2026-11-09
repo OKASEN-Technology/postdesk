@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from postdesk import __version__
-from postdesk.api.routers import account, assets, auth, cards, media, posts
+from postdesk.api.routers import account, act, assets, auth, cards, media, posts, settings, telegram
 
 STATIC = Path(__file__).resolve().parent / "static"
 
@@ -25,15 +25,31 @@ The Docker image has it built in.</p>
 </body>"""
 
 
-def create_app(*, scheduler: bool = False, worker: bool = False) -> FastAPI:
+def create_app(*, scheduler: bool = False, worker: bool = False, telegram_bot: bool = False) -> FastAPI:
     """`scheduler=True` (what `postdesk serve` passes) runs the publish loop
     in a background thread for the life of the app; `worker=True` runs the
-    agents' job runner (and the scout and the board sync) beside it."""
+    agents' job runner (and the scout and the board sync) beside it;
+    `telegram_bot=True` runs the Telegram bot when TELEGRAM_BOT_TOKEN is set."""
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         stop = threading.Event()
         threads = []
+        try:
+            from postdesk import store
+            from postdesk.db.session import SessionLocal
+
+            with SessionLocal() as session:
+                store.refresh_config(session, log=print)
+        except Exception as e:  # no database yet: the settings screen's edits wait for it
+            print(f"settings: not loaded ({type(e).__name__})")
+        if telegram_bot:
+            from postdesk.config import settings as env
+            from postdesk.telegram.bot import loop as bot_loop
+
+            if env.telegram_bot_token:
+                threads.append(threading.Thread(target=bot_loop, args=(stop,), name="postdesk-telegram",
+                                                daemon=True))
         if scheduler:
             from postdesk.scheduler import loop
 
@@ -57,6 +73,9 @@ def create_app(*, scheduler: bool = False, worker: bool = False) -> FastAPI:
     app.include_router(account.router)
     app.include_router(media.router)
     app.include_router(cards.router)
+    app.include_router(settings.router)
+    app.include_router(telegram.router)
+    app.include_router(act.router)
 
     @app.get("/api/health", include_in_schema=False)
     def health() -> dict:

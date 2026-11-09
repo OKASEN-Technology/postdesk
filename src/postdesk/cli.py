@@ -15,8 +15,12 @@ from postdesk import __version__
 app = typer.Typer(no_args_is_help=True, add_completion=False, help=__doc__)
 instagram_app = typer.Typer(no_args_is_help=True, help="The account behind the token.")
 db_app = typer.Typer(no_args_is_help=True, help="The database.")
+telegram_app = typer.Typer(no_args_is_help=True, help="The Telegram bot: pair your chat, test it.")
+permission_app = typer.Typer(no_args_is_help=True, help="Permissions on file: a rights holder's yes to their images.")
 app.add_typer(instagram_app, name="instagram")
 app.add_typer(db_app, name="db")
+app.add_typer(telegram_app, name="telegram")
+app.add_typer(permission_app, name="permission")
 
 
 def _echo(msg: str = "") -> None:
@@ -95,7 +99,7 @@ def init(
 
 @app.command()
 def doctor() -> None:
-    """Check the Claude key, database, migrations, Instagram token, public storage and the renderer, in order."""
+    """Check the Claude key, database, Instagram token, public storage, Telegram, the spend and the renderer."""
     from postdesk import doctor as dr
 
     checks = dr.run()
@@ -124,13 +128,16 @@ def serve(
                                    help="Run the publish loop inside this process (off if you use `postdesk cron`)."),
     worker: bool = typer.Option(True, "--worker/--no-worker",
                                 help="Run the agents' jobs inside this process (off if you run `postdesk worker`)."),
+    telegram: bool = typer.Option(True, "--telegram/--no-telegram",
+                                  help="Run the Telegram bot inside this process (when TELEGRAM_BOT_TOKEN is set)."),
 ) -> None:
-    """Run the API, the web UI, the scheduler loop and the agents' worker."""
+    """Run the API, the web UI, the scheduler loop, the agents' worker and the Telegram bot."""
     import uvicorn
 
     from postdesk.main import create_app
 
-    uvicorn.run(create_app(scheduler=scheduler, worker=worker), host=host, port=port, log_level="info")
+    uvicorn.run(create_app(scheduler=scheduler, worker=worker, telegram_bot=telegram), host=host, port=port,
+                log_level="info")
 
 
 @app.command()
@@ -451,6 +458,155 @@ def templates() -> None:
             _echo(f"{name:<12} {t.kind:<9} {t.description}")
         except plans.TemplateError as e:
             _echo(f"{name:<12} broken: {e}")
+
+
+# --- telegram ----------------------------------------------------------------
+
+
+@telegram_app.command("link")
+def telegram_link(code: str = typer.Argument(..., help="The code the bot sent you after /start.")) -> None:
+    """Pair the chat that sent /start to the bot. From then on the bot talks to that chat only."""
+    from postdesk.db.session import SessionLocal
+    from postdesk.telegram import pairing
+
+    with SessionLocal() as session:
+        try:
+            linked = pairing.link(session, code, by="cli")
+        except pairing.PairingError as e:
+            _err(str(e))
+            raise typer.Exit(1) from None
+    _echo(f"Paired with {linked['title'] or linked['chat_id']}. The bot talks to that chat from now on.")
+    _telegram_send(linked["chat_id"], "Paired. This chat runs postdesk from now on. /help lists what I do.")
+
+
+def _telegram_send(chat_id: str, text: str) -> bool:
+    from postdesk.config import settings
+    from postdesk.telegram.api import Bot, TelegramError
+
+    if not settings.telegram_bot_token:
+        _err("TELEGRAM_BOT_TOKEN is not set in .env, so nothing was sent")
+        return False
+    try:
+        Bot().send_message(chat_id, text)
+    except TelegramError as e:
+        _err(str(e))
+        return False
+    return True
+
+
+@telegram_app.command("unlink")
+def telegram_unlink() -> None:
+    """Unpair the chat. The bot answers no one until a chat is paired again."""
+    from postdesk.db.session import SessionLocal
+    from postdesk.telegram import pairing
+
+    with SessionLocal() as session:
+        was = pairing.unlink(session)
+    _echo("Unpaired." if was else "No chat was paired.")
+
+
+@telegram_app.command("test")
+def telegram_test() -> None:
+    """Send a test message to the paired chat."""
+    from postdesk.db.session import SessionLocal
+    from postdesk.telegram import pairing
+
+    with SessionLocal() as session:
+        linked = pairing.linked(session)
+    if linked is None:
+        _err("no chat is paired yet: send /start to the bot, then `postdesk telegram link <code>`")
+        raise typer.Exit(1)
+    if not _telegram_send(linked["chat_id"], "A test from postdesk. This is the chat it talks to."):
+        raise typer.Exit(1)
+    _echo(f"Sent to {linked['title'] or linked['chat_id']}.")
+
+
+@telegram_app.command("status")
+def telegram_status() -> None:
+    """Which bot, which chat, and how updates arrive (polling or webhook)."""
+    from postdesk.config import settings
+    from postdesk.db.session import SessionLocal
+    from postdesk.telegram import bot, pairing
+    from postdesk.telegram.api import Bot, TelegramError
+
+    if not settings.telegram_bot_token:
+        _err("TELEGRAM_BOT_TOKEN is not set in .env (from @BotFather: /newbot)")
+        raise typer.Exit(1)
+    try:
+        me = Bot().get_me()
+        _echo(f"bot:   @{me.get('username')}")
+    except TelegramError as e:
+        _err(str(e))
+        raise typer.Exit(1) from None
+    with SessionLocal() as session:
+        linked = pairing.linked(session)
+    _echo(f"chat:  {linked['title'] or linked['chat_id']} (paired {linked['linked_at'][:10]})" if linked
+          else "chat:  none paired; send /start to the bot")
+    _echo(f"mode:  {bot.mode()}" + (f" at {bot.webhook_url()}" if bot.mode() == "webhook" else ""))
+
+
+# --- permissions -------------------------------------------------------------
+
+
+@permission_app.command("add")
+def permission_add(
+    holder: str = typer.Option(..., "--holder", help="Who said yes: a person, a shop, a photographer."),
+    credit: str = typer.Option(..., "--credit", help='What goes on the image, e.g. "Photo: Jo Baker".'),
+    scope: str = typer.Option(..., "--scope", help="What they agreed to, in their words."),
+    evidence: str = typer.Option(..., "--evidence", help="Where the yes is: an email, a DM, a contract."),
+    instagram: str | None = typer.Option(None, "--instagram", help="Their Instagram handle."),
+    domain: str | None = typer.Option(None, "--domain", help="Their web domain."),
+    subject: str | None = typer.Option(None, "--subject", help="Only images of this subject (default: all theirs)."),
+    tag: str | None = typer.Option(None, "--tag", help='The caption\'s credit, e.g. "@jobakes".'),
+    kind: str = typer.Option("person", "--kind", help="person, organisation, photographer or other."),
+    expires: str | None = typer.Option(None, "--expires", help="YYYY-MM-DD, if it ends."),
+) -> None:
+    """Record a rights holder's yes, so their images carry a permission, not just a credit."""
+    from datetime import date
+
+    from postdesk.db.session import SessionLocal
+    from postdesk.images import rights
+
+    with SessionLocal() as session:
+        try:
+            p = rights.add(session, holder=holder, holder_kind=kind, scope=scope, credit=credit, evidence=evidence,
+                           recorded_by="cli", instagram=instagram, domain=domain, subject=subject, tag=tag,
+                           expires_on=date.fromisoformat(expires) if expires else None)
+        except ValueError as e:
+            _err(str(e))
+            raise typer.Exit(1) from None
+    _echo(f"Recorded: {p.id}")
+
+
+@permission_app.command("list")
+def permission_list(revoked: bool = typer.Option(False, "--revoked", help="Include revoked ones.")) -> None:
+    """The permissions on file."""
+    from postdesk.db.session import SessionLocal
+    from postdesk.images import rights
+
+    with SessionLocal() as session:
+        rows = rights.listed(session, include_revoked=revoked)
+        if not rows:
+            _echo("No permissions on file.")
+        for p in rows:
+            who = " ".join(x for x in (f"@{p.instagram}" if p.instagram else "", p.domain or "") if x)
+            state = "revoked" if p.revoked_at else ("active" if rights.active(p) else "expired")
+            _echo(f"{p.id}  {p.holder} ({who}){' for ' + p.subject if p.subject else ''}: {p.credit} [{state}]")
+
+
+@permission_app.command("revoke")
+def permission_revoke(permission_id: str = typer.Argument(...)) -> None:
+    """Revoke a permission; images found afterwards are credit only again."""
+    from postdesk.db.session import SessionLocal
+    from postdesk.images import rights
+
+    with SessionLocal() as session:
+        try:
+            rights.revoke(session, permission_id)
+        except (LookupError, ValueError) as e:
+            _err(str(e))
+            raise typer.Exit(1) from None
+    _echo("Revoked.")
 
 
 # --- db ----------------------------------------------------------------------
