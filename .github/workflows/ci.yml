@@ -61,7 +61,16 @@ jobs:
   docker:
     name: Build the image
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - run: docker build -f docker/Dockerfile.app -t postdesk:ci .
+      # The entrypoint only waits for a database before `serve` and `cron`.
       - run: docker run --rm postdesk:ci postdesk version
+      # Without a database, `serve` must give up with a clear message, not hang.
+      - run: |
+          set +e
+          out=$(docker run --rm -e POSTDESK_DB_WAIT_TRIES=2 -e DATABASE_URL=postgresql+psycopg://x:x@localhost:1/x postdesk:ci postdesk serve 2>&1)
+          code=$?
+          echo "$out" | tail -3
+          [ $code -ne 0 ] && echo "$out" | grep -q "check DATABASE_URL"

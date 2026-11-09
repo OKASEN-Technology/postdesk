@@ -1,11 +1,29 @@
 #!/bin/sh
-# Bring the schema up to date, then run whatever the command is
-# (`postdesk serve` by default; `postdesk cron` for a hosted cron job).
+# Bring the schema up to date before `postdesk serve` or `postdesk cron`,
+# then run the command. Any other command (`postdesk version`, `doctor`,
+# `instagram whoami`, a shell) runs straight away: it either needs no
+# database or reports on it itself.
+#
+# The wait is capped so a wrong DATABASE_URL fails loudly instead of
+# looping forever. POSTDESK_SKIP_MIGRATE=1 skips the step entirely.
 set -e
-if [ "${POSTDESK_SKIP_MIGRATE:-}" != "1" ]; then
+
+case "$1 $2" in
+  "postdesk serve"|"postdesk cron") migrate=1 ;;
+  *) migrate= ;;
+esac
+
+if [ -n "$migrate" ] && [ "${POSTDESK_SKIP_MIGRATE:-}" != "1" ]; then
+  tries=0
   until postdesk db upgrade; do
-    echo "waiting for the database…"
+    tries=$((tries + 1))
+    if [ "$tries" -ge "${POSTDESK_DB_WAIT_TRIES:-30}" ]; then
+      echo "the database did not answer after $tries tries; check DATABASE_URL" >&2
+      exit 1
+    fi
+    echo "waiting for the database… ($tries)"
     sleep 2
   done
 fi
+
 exec "$@"
