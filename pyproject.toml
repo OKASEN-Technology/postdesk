@@ -47,6 +47,8 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/postdesk"]
+# The built web UI is gitignored but ships in the wheel (web/README.md).
+artifacts = ["src/postdesk/static/**"]
 
 [tool.ruff]
 line-length = 120
