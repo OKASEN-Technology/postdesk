@@ -203,6 +203,7 @@ export default function Card({ config }: { config: Config }) {
         <span className="rounded bg-paper-2 px-2 py-0.5 text-xs font-medium text-ink-2">{card.closed ? "Closed" : card.column}</span>
         {card.busy && <span className="text-xs text-sun">{card.busy}…</span>}
       </div>
+      <Link to={`/cards/${card.id}/preview`} className="mt-3 inline-block text-sm font-medium text-moss hover:underline">Preview Instagram post →</Link>
       {card.stuck_reason && card.column === "On hold" && (
         <p className="mt-2 rounded bg-clay-2 p-2 text-sm text-clay">On hold: {card.stuck_reason}</p>
       )}

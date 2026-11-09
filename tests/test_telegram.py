@@ -552,6 +552,14 @@ def test_the_digest_goes_once_a_day_at_its_time(session, bot, fake, paired):
 # ---------------------------------------------------------------- the 4,096-character limit
 
 
+def test_brief_and_draft_buttons_link_to_the_private_preview(session):
+    card = _briefed(session)
+    url = f"https://postdesk.example/cards/{card.id}/preview"
+    for buttons in (render.brief_buttons(card), render.schedule_buttons(card, "tomorrow")):
+        assert [{"text": "Preview Instagram post", "url": url}] in buttons["inline_keyboard"]
+        assert any("callback_data" in button for row in buttons["inline_keyboard"] for button in row)
+
+
 def test_a_long_brief_is_split_at_paragraphs_with_the_buttons_on_the_last(session, bot, fake, paired):
     paras = [f"Paragraph {i}: " + ("the dough rests and rises slowly overnight in the cold. " * 12) for i in range(40)]
     c = _briefed(session)

@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 
 from postdesk import storage
 from postdesk.board import posts
+from postdesk.config import settings
 from postdesk.db.models import Card, ContentAsset
 
 LIMIT = 4096
@@ -182,11 +183,19 @@ def keyboard(card: Card, rows: list[list[str | tuple[str, str]]]) -> dict:
 
 
 def brief_buttons(card: Card) -> dict:
-    return keyboard(card, [["go"], ["rt", "hd"]])
+    buttons = keyboard(card, [["go"], ["rt", "hd"]])
+    buttons["inline_keyboard"].insert(0, [{"text": "Preview Instagram post", "url": preview_url(card)}])
+    return buttons
 
 
 def schedule_buttons(card: Card, when: str) -> dict:
-    return keyboard(card, [[("sc", f"Schedule for {when}")], ["pk"], ["rt", "hd"]])
+    buttons = keyboard(card, [[("sc", f"Schedule for {when}")], ["pk"], ["rt", "hd"]])
+    buttons["inline_keyboard"].insert(1, [{"text": "Preview Instagram post", "url": preview_url(card)}])
+    return buttons
+
+
+def preview_url(card: Card) -> str:
+    return f"{settings.public_base_url.rstrip('/')}/cards/{card.id}/preview"
 
 
 def hold_buttons(session: Session, card: Card) -> dict:

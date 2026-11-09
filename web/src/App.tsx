@@ -4,6 +4,7 @@ import { api, type AgentStatus, type Config } from "./api";
 import Login from "./pages/Login";
 import Board from "./pages/Board";
 import Card from "./pages/Card";
+import Preview from "./pages/Preview";
 import Queue from "./pages/Queue";
 import PostEditor from "./pages/PostEditor";
 import NewPost from "./pages/NewPost";
@@ -88,6 +89,7 @@ export default function App() {
           <Routes>
             <Route path="/" element={<Board config={config} />} />
             <Route path="/cards/:id" element={<Card config={config} />} />
+            <Route path="/cards/:id/preview" element={<Preview config={config} />} />
             <Route path="/queue" element={<Queue config={config} />} />
             <Route path="/new" element={<NewPost config={config} />} />
             <Route path="/posts/:id" element={<PostEditor config={config} />} />
