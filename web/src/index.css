@@ -1,0 +1,21 @@
+@import "tailwindcss";
+
+@theme {
+  /* A warm, plain palette of this project's own: paper, ink, a moss accent. */
+  --color-paper: #faf8f4;
+  --color-paper-2: #f1ede6;
+  --color-line: #e2dcd2;
+  --color-ink: #26231f;
+  --color-ink-2: #5d574f;
+  --color-ink-3: #8c857b;
+  --color-moss: #3f6b4a;
+  --color-moss-2: #e4efe6;
+  --color-clay: #b4472f;
+  --color-clay-2: #f7e4df;
+  --color-sun: #c4921a;
+  --color-sun-2: #fbf0d5;
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+html { background: var(--color-paper); color: var(--color-ink); }
+body { margin: 0; font-family: var(--font-sans); }
