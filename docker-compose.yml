@@ -1,4 +1,4 @@
-# `docker compose up -d`: Postgres and the app. The slide renderer joins in M1.
+# `docker compose up -d`: Postgres, the app and the slide renderer.
 # Secrets come from .env beside this file; the rest from postdesk.toml.
 
 services:
@@ -26,14 +26,31 @@ services:
       DATABASE_URL: postgresql+psycopg://postdesk:postdesk@db:5432/postdesk
       POSTDESK_DATA_DIR: /data
       POSTDESK_CONFIG: /app/postdesk.toml
+      RENDERER_URL: http://renderer:3100
+      RENDERER_TOKEN: ${RENDERER_TOKEN:-change-me}
     volumes:
       - data:/data
       - ./postdesk.toml:/app/postdesk.toml:ro
+      - ./voice.md:/app/voice.md:ro
+      - ./templates:/app/templates:ro
     ports:
       - "${POSTDESK_PORT:-8080}:8080"
     depends_on:
       db:
         condition: service_healthy
+      renderer:
+        condition: service_healthy
+    restart: unless-stopped
+
+  renderer:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.renderer
+    environment:
+      RENDERER_TOKEN: ${RENDERER_TOKEN:-change-me}
+    volumes:
+      # Your own themes (docs/themes.md): a folder per theme.
+      - ./themes:/themes:ro
     restart: unless-stopped
 
 volumes:

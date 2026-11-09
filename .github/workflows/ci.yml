@@ -58,13 +58,34 @@ jobs:
       - run: npm ci
       - run: npm run build
 
-  docker:
-    name: Build the image
+  renderer:
+    name: Test the renderer
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: renderer
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: renderer/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      # The schema the Python side ships is the renderer's, byte for byte.
+      - run: cmp schema/slide.json ../src/postdesk/maker/slide.schema.json
+
+  docker:
+    name: Build the images
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - run: docker build -f docker/Dockerfile.app -t postdesk:ci .
+      - run: docker build -f docker/Dockerfile.renderer -t postdesk-renderer:ci .
       # The entrypoint only waits for a database before `serve` and `cron`.
       - run: docker run --rm postdesk:ci postdesk version
       # Without a database, `serve` must give up with a clear message, not hang.
@@ -74,3 +95,9 @@ jobs:
           code=$?
           echo "$out" | tail -3
           [ $code -ne 0 ] && echo "$out" | grep -q "check DATABASE_URL"
+      # The renderer image renders the example slide from inside the container.
+      - run: |
+          mkdir -p out && chmod 777 out
+          docker run --rm -v "$PWD/examples:/examples:ro" -v "$PWD/out:/out" postdesk-renderer:ci \
+            node dist/cli.js render --spec /examples/slide.json --out /out/slide.jpg
+          test "$(head -c 2 out/slide.jpg | od -An -tx1 | tr -d ' ')" = "ffd8"
