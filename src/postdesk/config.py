@@ -174,6 +174,37 @@ class Review(BaseModel):
     extra_checks: dict[str, str] = {}
 
 
+class Scout(BaseModel):
+    """When the scout looks for new things to post about (board/scout.py)."""
+
+    every_hours: float = Field(2, gt=0)
+    days: int = Field(3, ge=1)  # how far back a new item may be
+    max_per_run: int = Field(5, ge=1)
+    hours: list[str] = ["06:00", "21:00"]  # local; it rests outside these
+
+    @field_validator("hours")
+    @classmethod
+    def _two_times(cls, v: list[str]) -> list[str]:
+        if len(v) != 2:
+            raise ValueError("hours is [start, end], like [\"06:00\", \"21:00\"]")
+        for x in v:
+            _parse_hhmm(x)
+        return v
+
+    @property
+    def window(self) -> tuple[time, time]:
+        return _parse_hhmm(self.hours[0]), _parse_hhmm(self.hours[1])
+
+
+class Partner(BaseModel):
+    """The post partner's web access: it may confirm a date or a name on
+    these sites (plus the source's own), never take a figure or an image."""
+
+    allowed_domains: list[str] = []
+    web_search: bool = True
+    max_searches: int = Field(5, ge=1)
+
+
 class Model(BaseModel):
     model: str = "claude-sonnet-5-5"
     effort: str = "medium"
@@ -199,6 +230,8 @@ class Config(BaseModel):
     voice: Voice = Voice()
     theme: Theme = Theme()
     sources: dict[str, dict] = {}
+    scout: Scout = Scout()
+    partner: Partner = Partner()
     images: Images = Images()
     review: Review = Review()
     llm: LLM = LLM()

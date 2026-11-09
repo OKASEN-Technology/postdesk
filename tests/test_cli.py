@@ -32,9 +32,28 @@ def test_version():
     assert result.exit_code == 0 and result.output.strip() == __version__
 
 
-def test_worker_is_a_stub():
-    result = runner.invoke(app, ["worker"])
-    assert result.exit_code == 1 and "not built yet" in result.output
+def test_worker_once_runs_the_waiting_jobs_and_scout_files_cards(session, monkeypatch):
+    from postdesk.board import cards
+    from postdesk.config import config
+    from tests import boardkit as kit
+
+    c = kit.card(session, column="Inbox")
+    from postdesk import jobs
+
+    jobs.enqueue(session, "partner", c.id)  # on an Inbox card: the turn does nothing, without calling Claude
+    result = runner.invoke(app, ["worker", "--once", "--no-scout"])
+    assert result.exit_code == 0, result.output
+    assert "ran 1 job(s)" in result.output
+
+    monkeypatch.setattr(config, "sources", {"bakes": {"type": "rss", "url": kit.FEED_URL}})
+    from postdesk.board import scout
+
+    real = scout.run
+    monkeypatch.setattr(scout, "run", lambda s, **kw: real(s, client=kit.feed_client(kit.feed_items(1)), **kw))
+    result = runner.invoke(app, ["scout", "--days", "2"])
+    assert result.exit_code == 0, result.output
+    assert "scout: 1 filed, 1 seen" in result.output
+    assert cards.by_fingerprint(session, "post:bakes:rss:https://bakes.example/loaf-1") is not None
 
 
 def test_post_dry_run_validates_and_posts_nothing(tmp_path, monkeypatch):

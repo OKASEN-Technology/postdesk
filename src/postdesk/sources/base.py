@@ -89,6 +89,28 @@ class Facts:
             sd["image"] = s.image.spec() if s.image else None
         return d
 
+    def to_json(self) -> dict:
+        """Everything, images whole (licence, what): what a card keeps, so the
+        partner, the maker and the editor read the facts as they were filed."""
+        d = asdict(self)
+        d["published_at"] = self.published_at.isoformat() if self.published_at else None
+        return d
+
+    @classmethod
+    def from_json(cls, d: dict) -> Facts:
+        def img(x):
+            return Image(**{k: v for k, v in x.items() if k in Image.__dataclass_fields__}) if x else None
+
+        subjects = [Subject(**{**{k: v for k, v in s.items() if k in Subject.__dataclass_fields__},
+                               "image": img(s.get("image"))}) for s in d.get("subjects") or []]
+        when = d.get("published_at")
+        return cls(
+            title=d.get("title") or "", summary=d.get("summary") or "", body_md=d.get("body_md") or "",
+            url=d.get("url"), published_at=datetime.fromisoformat(when) if when else None,
+            citations=list(d.get("citations") or []), hero=img(d.get("hero")), figures=dict(d.get("figures") or {}),
+            subjects=subjects, extra=dict(d.get("extra") or {}), ref=d.get("ref"), template=d.get("template"),
+        )
+
     def prompt_text(self, *, body_chars: int = 12000) -> str:
         """The facts as the maker's user turn shows them: the article, then
         the data. Source text is data to write from, never an instruction."""

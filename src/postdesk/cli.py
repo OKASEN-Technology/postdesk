@@ -122,20 +122,66 @@ def serve(
     port: int = typer.Option(8080, help="Port."),
     scheduler: bool = typer.Option(True, "--scheduler/--no-scheduler",
                                    help="Run the publish loop inside this process (off if you use `postdesk cron`)."),
+    worker: bool = typer.Option(True, "--worker/--no-worker",
+                                help="Run the agents' jobs inside this process (off if you run `postdesk worker`)."),
 ) -> None:
-    """Run the API, the web UI and the scheduler loop."""
+    """Run the API, the web UI, the scheduler loop and the agents' worker."""
     import uvicorn
 
     from postdesk.main import create_app
 
-    uvicorn.run(create_app(scheduler=scheduler), host=host, port=port, log_level="info")
+    uvicorn.run(create_app(scheduler=scheduler, worker=worker), host=host, port=port, log_level="info")
 
 
 @app.command()
-def worker() -> None:
-    """The job runner for the agents (arrives with the board, M2)."""
-    _echo("worker: not built yet (docs/roadmap.md, M2). The scheduler runs inside `serve` and `cron`.")
-    raise typer.Exit(1)
+def worker(
+    once: bool = typer.Option(False, "--once", help="Run the jobs waiting now (and one housekeeping pass), then exit."),
+    scout: bool = typer.Option(True, "--scout/--no-scout", help="Let the worker run the scout on its schedule."),
+) -> None:
+    """The agents' job runner: the partner, maker, editor and revision turns,
+    the board sync and the scout. `serve` runs one too; run this instead with
+    `serve --no-worker` to keep it in its own process."""
+    import signal
+    import threading
+
+    from postdesk import jobs
+    from postdesk.db.session import SessionLocal
+
+    if once:
+        with SessionLocal() as session:
+            jobs.housekeeping(session, None, log=_echo, scout=scout)
+            done = jobs.run_pending(session, None, log=_echo)
+        _echo(f"worker: ran {len(done)} job(s)")
+        return
+    stop = threading.Event()
+    signal.signal(signal.SIGTERM, lambda *_: stop.set())
+    try:
+        jobs.loop(stop, log=_echo, scout=scout)
+    except KeyboardInterrupt:
+        stop.set()
+
+
+@app.command("scout")
+def scout_cmd(
+    days: int = typer.Option(None, "--days", help="How far back to look (default `[scout].days`)."),
+    source: str = typer.Option(None, "--source", help="Only this `[sources]` key."),
+) -> None:
+    """Look through the sources now and file new items as cards in Planned
+    (at most max_per_run in the scout settings); the worker writes their briefs."""
+    from postdesk.board import scout
+    from postdesk.db.session import SessionLocal
+    from postdesk.sources import SourceError
+
+    with SessionLocal() as session:
+        try:
+            r = scout.run(session, days=days, only=source, log=_echo)
+        except SourceError as e:
+            _err(str(e))
+            raise typer.Exit(1) from None
+    _echo(f"scout: {len(r.filed)} filed, {r.seen} seen, {r.deferred} left for the next run")
+    for e in r.errors:
+        _err(e)
+    raise typer.Exit(1 if r.errors and not r.filed else 0)
 
 
 @app.command()
