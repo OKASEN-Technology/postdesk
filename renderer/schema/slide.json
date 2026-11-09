@@ -1,0 +1,239 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/OKASEN-Technology/postdesk/renderer/schema/slide.json",
+  "title": "postdesk slide spec",
+  "description": "One slide for POST /render. `type` picks the layout; the other fields are that layout's words, image and data. Field names match renderer/src/slides.ts.",
+  "type": "object",
+  "discriminator": { "propertyName": "type" },
+  "required": ["type"],
+  "oneOf": [
+    { "$ref": "#/$defs/cover" },
+    { "$ref": "#/$defs/caption" },
+    { "$ref": "#/$defs/statement" },
+    { "$ref": "#/$defs/stat" },
+    { "$ref": "#/$defs/table" },
+    { "$ref": "#/$defs/label" },
+    { "$ref": "#/$defs/cta" },
+    { "$ref": "#/$defs/story" }
+  ],
+  "$defs": {
+    "text": { "type": "string", "maxLength": 600 },
+    "optionalText": { "type": ["string", "null"], "maxLength": 600 },
+    "image": {
+      "type": "object",
+      "required": ["url"],
+      "additionalProperties": false,
+      "properties": {
+        "url": { "type": "string", "minLength": 1, "pattern": "^(https?://|data:image/)" },
+        "credit": { "type": ["string", "null"], "maxLength": 300 },
+        "fit": { "type": "string", "enum": ["cover", "contain"] }
+      }
+    },
+    "optionalImage": { "oneOf": [{ "$ref": "#/$defs/image" }, { "type": "null" }] },
+    "chrome": {
+      "n": { "type": "integer", "minimum": 1 },
+      "total": { "type": "integer", "minimum": 1 },
+      "theme": { "type": "string", "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$" }
+    },
+    "cover": {
+      "type": "object",
+      "required": ["type", "kicker", "headline", "sub"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "cover" },
+        "n": { "$ref": "#/$defs/chrome/n" },
+        "total": { "$ref": "#/$defs/chrome/total" },
+        "theme": { "$ref": "#/$defs/chrome/theme" },
+        "kicker": { "$ref": "#/$defs/text" },
+        "kicker_sub": { "$ref": "#/$defs/optionalText" },
+        "headline": { "$ref": "#/$defs/text" },
+        "sub": { "$ref": "#/$defs/text" },
+        "link": { "$ref": "#/$defs/optionalText" },
+        "image": { "$ref": "#/$defs/optionalImage" },
+        "figure": { "$ref": "#/$defs/optionalText" }
+      }
+    },
+    "caption": {
+      "type": "object",
+      "required": ["type", "image", "text"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "caption" },
+        "n": { "$ref": "#/$defs/chrome/n" },
+        "total": { "$ref": "#/$defs/chrome/total" },
+        "theme": { "$ref": "#/$defs/chrome/theme" },
+        "image": { "$ref": "#/$defs/image" },
+        "kicker": { "$ref": "#/$defs/optionalText" },
+        "text": { "$ref": "#/$defs/text" }
+      }
+    },
+    "statement": {
+      "type": "object",
+      "required": ["type", "kicker", "headline", "body"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "statement" },
+        "n": { "$ref": "#/$defs/chrome/n" },
+        "total": { "$ref": "#/$defs/chrome/total" },
+        "theme": { "$ref": "#/$defs/chrome/theme" },
+        "background": { "$ref": "#/$defs/optionalImage" },
+        "num": { "$ref": "#/$defs/optionalText" },
+        "kicker": { "$ref": "#/$defs/text" },
+        "headline": { "$ref": "#/$defs/text" },
+        "headline_em": { "$ref": "#/$defs/optionalText" },
+        "body": { "$ref": "#/$defs/text" },
+        "source": { "$ref": "#/$defs/optionalText" }
+      }
+    },
+    "stat": {
+      "type": "object",
+      "required": ["type", "kicker", "figure", "figure_sub"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "stat" },
+        "n": { "$ref": "#/$defs/chrome/n" },
+        "total": { "$ref": "#/$defs/chrome/total" },
+        "theme": { "$ref": "#/$defs/chrome/theme" },
+        "kicker": { "$ref": "#/$defs/text" },
+        "figure": { "type": "string", "minLength": 1, "maxLength": 20 },
+        "figure_sub": { "$ref": "#/$defs/text" },
+        "note": { "$ref": "#/$defs/optionalText" },
+        "bands": {
+          "type": ["array", "null"],
+          "maxItems": 6,
+          "items": {
+            "type": "object",
+            "required": ["label", "detail", "lo", "hi", "level"],
+            "additionalProperties": false,
+            "properties": {
+              "label": { "$ref": "#/$defs/text" },
+              "detail": { "$ref": "#/$defs/text" },
+              "lo": { "type": "number" },
+              "hi": { "type": "number" },
+              "level": { "type": "number" }
+            }
+          }
+        },
+        "scale": {
+          "type": ["object", "null"],
+          "required": ["min", "max"],
+          "additionalProperties": false,
+          "properties": {
+            "min": { "type": "number" },
+            "max": { "type": "number" },
+            "base": { "type": ["number", "null"] }
+          }
+        },
+        "source": { "$ref": "#/$defs/optionalText" }
+      }
+    },
+    "table": {
+      "type": "object",
+      "required": ["type", "kicker", "headline", "rows"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "table" },
+        "n": { "$ref": "#/$defs/chrome/n" },
+        "total": { "$ref": "#/$defs/chrome/total" },
+        "theme": { "$ref": "#/$defs/chrome/theme" },
+        "kicker": { "$ref": "#/$defs/text" },
+        "headline": { "$ref": "#/$defs/text" },
+        "rows": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 12,
+          "items": {
+            "type": "object",
+            "required": ["rank", "name"],
+            "additionalProperties": false,
+            "properties": {
+              "rank": { "type": "integer", "minimum": 0 },
+              "name": { "$ref": "#/$defs/text" },
+              "delta": { "type": ["integer", "null"] },
+              "value": { "$ref": "#/$defs/optionalText" }
+            }
+          }
+        },
+        "footer_left": { "$ref": "#/$defs/optionalText" },
+        "footer_right": { "$ref": "#/$defs/optionalText" }
+      }
+    },
+    "label": {
+      "type": "object",
+      "required": ["type", "tag", "tag_tone", "kicker", "name", "line1"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "label" },
+        "n": { "$ref": "#/$defs/chrome/n" },
+        "total": { "$ref": "#/$defs/chrome/total" },
+        "theme": { "$ref": "#/$defs/chrome/theme" },
+        "tag": { "$ref": "#/$defs/text" },
+        "tag_tone": { "type": "string", "enum": ["up", "down", "new", "neutral"] },
+        "kicker": { "$ref": "#/$defs/text" },
+        "name": { "$ref": "#/$defs/text" },
+        "line1": { "$ref": "#/$defs/text" },
+        "line2": { "$ref": "#/$defs/optionalText" },
+        "meta": { "$ref": "#/$defs/optionalText" },
+        "link": { "$ref": "#/$defs/optionalText" },
+        "image": { "$ref": "#/$defs/optionalImage" },
+        "work": {
+          "type": ["object", "null"],
+          "required": ["title"],
+          "additionalProperties": false,
+          "properties": {
+            "title": { "$ref": "#/$defs/text" },
+            "meta": { "$ref": "#/$defs/optionalText" }
+          }
+        },
+        "facts": {
+          "type": ["array", "null"],
+          "maxItems": 4,
+          "items": {
+            "type": "object",
+            "required": ["label", "value"],
+            "additionalProperties": false,
+            "properties": {
+              "label": { "$ref": "#/$defs/text" },
+              "value": { "$ref": "#/$defs/text" }
+            }
+          }
+        }
+      }
+    },
+    "cta": {
+      "type": "object",
+      "required": ["type", "kicker", "headline", "body"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "cta" },
+        "n": { "$ref": "#/$defs/chrome/n" },
+        "total": { "$ref": "#/$defs/chrome/total" },
+        "theme": { "$ref": "#/$defs/chrome/theme" },
+        "background": { "$ref": "#/$defs/optionalImage" },
+        "kicker": { "$ref": "#/$defs/text" },
+        "headline": { "$ref": "#/$defs/text" },
+        "headline_em": { "$ref": "#/$defs/optionalText" },
+        "body": { "$ref": "#/$defs/text" },
+        "footer_line": { "$ref": "#/$defs/optionalText" },
+        "site": { "$ref": "#/$defs/optionalText" }
+      }
+    },
+    "story": {
+      "type": "object",
+      "required": ["type", "kicker", "headline", "line"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "story" },
+        "n": { "$ref": "#/$defs/chrome/n" },
+        "total": { "$ref": "#/$defs/chrome/total" },
+        "theme": { "$ref": "#/$defs/chrome/theme" },
+        "kicker": { "$ref": "#/$defs/text" },
+        "kicker_sub": { "$ref": "#/$defs/optionalText" },
+        "headline": { "$ref": "#/$defs/text" },
+        "line": { "$ref": "#/$defs/text" },
+        "image": { "$ref": "#/$defs/optionalImage" },
+        "figure": { "$ref": "#/$defs/optionalText" }
+      }
+    }
+  }
+}
