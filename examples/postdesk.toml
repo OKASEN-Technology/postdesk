@@ -1,0 +1,52 @@
+# postdesk.toml: everything that is not a secret. Copy to the repo root and edit.
+
+[account]
+handle = "yourhandle"                 # your Instagram username, without the @
+site = "https://example.com"          # what "link in bio" points at
+timezone = "Europe/London"            # IANA name; every time below is in it
+audience = "people who bake at home"  # one line the writer keeps in mind
+
+[schedule]
+feed_slot = "18:00"        # when a feed post goes out, if you accept the suggestion
+story_slot = "18:15"       # a Story goes 15 minutes after its post, or here on its own
+max_feed_per_day = 1
+max_story_per_day = 1
+min_lead_hours = 2         # never suggest a time closer than this
+publisher_hours = ["06:00", "21:00"]   # the publisher only posts between these
+
+[voice]
+file = "voice.md"          # how you sound; the writer and the editor both read it
+hashtags = ["#homebaking", "#sourdough", "#weekendbake"]   # the fixed set captions draw from
+max_hashtags = 5
+retired_phrases = ["game-changer", "elevate", "not just X, it's Y"]
+
+[theme]
+name = "default"           # renderer/themes/<name>/theme.json
+
+[sources]
+# What you post about. Each entry files a card when something new appears.
+rss = { url = "https://example.com/feed.xml", template = "article" }
+# markdown = { path = "./posts", template = "article" }
+
+[images]
+# Where a slide's picture may come from, in order of preference.
+sources = ["page", "wikimedia", "business_discovery", "attachment"]
+
+[review]
+max_rounds = 2             # writer <-> editor rounds before the card is parked for you
+[review.extra_checks]
+# Your own checks, one sentence each. The editor adds them to its eight.
+# prices = "No price is stated for a single item."
+
+[llm]
+partner = { model = "claude-opus-5-5", effort = "medium" }    # writes the brief, talks with you
+editor  = { model = "claude-opus-5-5", effort = "medium" }    # checks the post, fresh context
+maker   = { model = "claude-sonnet-5-5", effort = "low" }     # writes the words
+monthly_usd = 30           # over this, the agents stop and the bot tells you
+
+[telegram]
+digest_at = "08:00"        # the daily summary of what needs you
+
+[notify]
+# Optional one-way extras; tokens live in .env.
+# slack = { enabled = true }

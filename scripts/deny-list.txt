@@ -1,0 +1,14 @@
+# Names that must not appear anywhere in this repository (scripts/check-neutral.sh).
+# Extended regex, case-insensitive, one per line. Add to it; never remove.
+# Lines matching scripts/allow-list.txt (the README's credit, the
+# organisation's GitHub handle) are dropped before these are applied.
+\bokasen\b
+\bokn\b
+@okasen
+okasen\.art
+\bmovers\b
+\baspire art\b
+\bstrauss\b
+\bbonhams\b
+\bgoodman gallery\b
+\bstevenson\b

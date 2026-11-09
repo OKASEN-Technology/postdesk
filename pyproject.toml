@@ -1,0 +1,57 @@
+[project]
+name = "postdesk"
+version = "0.0.1"
+description = "A self-hosted Instagram manager you run from Telegram: Claude proposes and makes the posts, you approve every one, it schedules and publishes."
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.12"
+authors = [{ name = "OKASEN Technology" }]
+keywords = ["instagram", "telegram", "claude", "scheduler", "social-media"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Framework :: FastAPI",
+    "Topic :: Communications",
+]
+dependencies = [
+    "anthropic>=1.2.0",
+    "fastapi>=0.141.1",
+    "httpx>=0.28.1",
+    "pillow>=13.0.0",
+    "pydantic>=2.13.5",
+    "pydantic-settings>=2.15.0",
+    "sqlalchemy>=2.0",
+    "alembic>=1.19.1",
+    "psycopg[binary]>=3.3.4",
+    "uvicorn[standard]>=0.52.4",
+    "typer>=0.15",
+    "feedparser>=6.0",
+    "python-multipart>=0.0.20",
+]
+
+[project.optional-dependencies]
+s3 = ["boto3>=1.43"]
+dev = ["pytest>=8", "pytest-asyncio>=0.24", "ruff>=0.8", "respx>=0.22"]
+
+[project.scripts]
+postdesk = "postdesk.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/OKASEN-Technology/postdesk"
+Issues = "https://github.com/OKASEN-Technology/postdesk/issues"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/postdesk"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_default_fixture_loop_scope = "function"

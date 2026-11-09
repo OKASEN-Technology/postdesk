@@ -1,0 +1,6 @@
+# Lines that may name the organisation: its GitHub handle (repository URLs,
+# the package's author field) and the README's one credit line. A line
+# matching any of these is skipped by check-neutral.sh before the deny list
+# runs. Keep it to the handle and the credit; nothing else.
+OKASEN-Technology
+OKASEN Technology
