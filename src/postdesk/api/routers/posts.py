@@ -13,7 +13,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from postdesk import instagram as ig
-from postdesk import queue
+from postdesk import maker, queue
 from postdesk.api.auth import require_auth
 from postdesk.api.schemas import CaptionLint, PostApprove, PostCreate, PostItem, PostRow, PostUpdate, Slide
 from postdesk.db.models import SocialPost
@@ -40,7 +40,8 @@ def item(post: SocialPost) -> PostItem:
         status=post.status,
         title=post.title,
         caption=post.caption,
-        slides=[Slide(asset_id=s["asset_id"], alt_text=s.get("alt_text", ""), url=asset_url(s["asset_id"]))
+        slides=[Slide(asset_id=s["asset_id"], alt_text=s.get("alt_text", ""), url=asset_url(s["asset_id"]),
+                      spec=s.get("spec"), words=maker.slide_words(s.get("spec")))
                 for s in post.slides],
         card_id=str(post.card_id) if post.card_id else None,
         source_ref=post.source_ref,
@@ -88,6 +89,10 @@ def _run(fn, *args, **kwargs) -> PostItem:
         raise HTTPException(status_code=404, detail=str(e)) from e
     except queue.QueueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
+    except maker.MakerError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+    except maker.RenderError as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
 
 
 @router.get("", response_model=list[PostRow])
@@ -157,7 +162,15 @@ def get_post(post_id: uuid.UUID, session: Session = Depends(get_session)) -> Pos
 
 
 @router.patch("/{post_id}", response_model=PostItem)
-def update_post(post_id: uuid.UUID, body: PostUpdate, session: Session = Depends(get_session)) -> PostItem:
+def update_post(post_id: uuid.UUID, body: PostUpdate, actor: str = Depends(require_auth),
+                session: Session = Depends(get_session)) -> PostItem:
+    """Edit a draft: title, caption, alt text, and the words on a made
+    slide (`slides: [{index, fields}]`), which is checked against the
+    post's numbers and re-rendered. 409 on an approved post, 422 when the
+    words fail the checks, 502 when the renderer is down."""
+    if body.slides:
+        return _run(maker.revise, session, post_id, title=body.title, caption=body.caption, alt_texts=body.alt_texts,
+                    slides=[p.model_dump() for p in body.slides], by=actor)
     return _run(queue.update_post, session, post_id, title=body.title, caption=body.caption, alt_texts=body.alt_texts)
 
 

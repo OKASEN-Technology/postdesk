@@ -5,7 +5,7 @@ Each milestone is usable on its own and ships behind a tag.
 | # | Milestone | Done when |
 |---|---|---|
 | M0 | **Scheduler**: the queue, Instagram publishing, storage, the queue web UI and post editor, `postdesk init / doctor / post / queue / cron / serve`, this README. **Done.** | a stranger installs it from the README alone, queues a hand-made carousel, approves it with a time, and it posts |
-| M1 | **Maker**: the slide renderer with eight slide types and a neutral theme, post templates, copy writing with the figure check, re-rendering one slide after an edit | a Markdown file becomes a rendered carousel and Story in the queue; a figure not in the file is rejected |
+| M1 | **Maker**: the slide renderer with eight slide types and a neutral theme, post templates, copy writing with the figure check, re-rendering one slide after an edit, `postdesk make`. **Done.** | a Markdown file becomes a rendered carousel and Story in the queue; a figure not in the file is rejected |
 | M2 | **Board, planner, editor**: cards and gates, the scout, the planner with image input and web search, the editor, the job runner, the board web UI | from a new feed item to "awaiting approval" with no human step but Approve; a non-admin move into a gate column is reverted |
 | M3 | **Telegram, images, settings**: the bot with every message and command, four image sources with rights records, one-way notifiers, the settings screen, spend ceilings | a stranger runs a week of posts from the chat alone |
 | M4 | **First outside consumer**: the company that wrote this runs its own account on the package, with its names and look as plugins in its own repo | two weeks of daily posts in production through the package |

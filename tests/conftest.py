@@ -8,10 +8,21 @@ is emptied after each test. Without a reachable database the tests that
 need one are skipped, unless `CI` is set, in which case they fail.
 """
 
+# The environment is set before the imports below, on purpose.
+# ruff: noqa: E402
+
 from __future__ import annotations
 
 import os
 from pathlib import Path
+
+# Before postdesk is imported: its settings and config are read at import
+# time, and a developer's own .env and postdesk.toml (both git-ignored, both
+# in the working directory) must not decide what a test sees. CI has
+# neither, so without this a test can pass locally and fail there.
+_NOWHERE = str(Path(__file__).parent / "__no_such_file__")
+os.environ["POSTDESK_ENV_FILE"] = _NOWHERE
+os.environ["POSTDESK_CONFIG"] = _NOWHERE
 
 import httpx
 import pytest
@@ -23,7 +34,7 @@ from postdesk.db import session as db_session
 
 TEST_DB = os.environ.get("POSTDESK_TEST_DATABASE_URL",
                          "postgresql+psycopg://postgres:postgres@localhost:5432/postdesk_test")
-TABLES = ("social_post", "content_asset", "metric", "setting", "image_permission")
+TABLES = ("social_post", "content_asset", "metric", "setting", "image_permission", "agent_run")
 
 
 def pytest_configure(config):
@@ -64,6 +75,8 @@ def session(database, tmp_path):
 def cfg(monkeypatch, tmp_path: Path):
     """A known configuration: London time, the example slots, local storage
     in a temp dir, a public address Instagram could reach."""
+    monkeypatch.setattr(config.account, "handle", "bakery_tales")
+    monkeypatch.setattr(config.account, "site", "https://bakery.example")
     monkeypatch.setattr(config.account, "timezone", "Europe/London")
     monkeypatch.setattr(config.schedule, "feed_slot", "18:00")
     monkeypatch.setattr(config.schedule, "story_slot", "18:15")

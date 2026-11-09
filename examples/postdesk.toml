@@ -23,12 +23,12 @@ max_hashtags = 5
 retired_phrases = ["game-changer", "elevate", "not just X, it's Y"]
 
 [theme]
-name = "default"           # renderer/themes/<name>/theme.json
+name = "default"           # renderer/themes/<name>/theme.json, or themes/<name>/ here (docs/themes.md)
 
 [sources]
 # What you post about. Each entry files a card when something new appears.
-rss = { url = "https://example.com/feed.xml", template = "article" }
-# markdown = { path = "./posts", template = "article" }
+# rss = { url = "https://example.com/feed.xml", template = "article" }   # with the planner (M2)
+markdown = { path = "./posts", template = "article" }                    # docs/sources.md
 
 [images]
 # Where a slide's picture may come from, in order of preference.

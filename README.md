@@ -3,13 +3,14 @@
 An Instagram manager you run yourself, driven from Telegram, with Claude
 writing the posts and you approving every one.
 
-> **Status: the scheduler works.** You can queue a hand-made carousel or
-> Story, approve it with a time in the web page, and it posts through
-> Instagram's official API at that time. The planner, the maker (slides,
-> captions, alt text written by Claude), the editor pass and the Telegram
-> bot are the next [milestones](docs/roadmap.md). Until they land, the
-> sections below marked *coming* describe where this is going, not what
-> it does today.
+> **Status: the scheduler and the maker work.** `postdesk make article.md`
+> turns a Markdown file into a rendered carousel and its Story, written by
+> Claude in your voice and your theme, as drafts you approve in the web
+> page; a hand-made post can be queued too; approved posts go out through
+> Instagram's official API at their time. The planner (cards and a brief
+> talked over with you), the editor pass and the Telegram bot are the next
+> [milestones](docs/roadmap.md). Until they land, the sections below marked
+> *coming* describe where this is going, not what it does today.
 
 You tell it what you post about: a blog feed, a folder of Markdown, or a
 link you send it. It proposes a post as a card. Claude writes a brief and
@@ -32,9 +33,10 @@ scraping, no auto-liking, no DMs, no follower games.
   service. It needs **Docker**. Posting requires the machine to be
   reachable from the internet, or an S3-compatible bucket; the setup
   explains both.
-- *Coming:* an **Anthropic API key** for Claude, once the writer lands
+- An **Anthropic API key** for Claude, to have posts written
   ([get one here](https://platform.claude.com/); a typical post costs a
-  few cents), and a **Telegram account** for the daily chat.
+  few cents). Queueing hand-made posts needs none.
+- *Coming:* a **Telegram account** for the daily chat.
 
 ## Install in 15 minutes
 
@@ -131,6 +133,32 @@ docker compose exec app postdesk post slides/01.png slides/02.png --caption capt
 docker compose exec app postdesk post slides/01.png slides/02.png --caption caption.txt --publish  # posts it
 ```
 
+## Have Claude make the post
+
+Write what you want to post about as a Markdown file with a little front
+matter: the title, the date, a summary, the link, an optional photo with
+its credit, and any numbers the slides may use.
+[`examples/article.md`](examples/article.md) is a complete one. Then:
+
+```bash
+docker compose exec app postdesk make examples/article.md
+```
+
+It plans the post from a template (`article` by default: a cover, three
+key points, a number if the piece has one, a call to action, and a
+Story), has Claude write every slide's words, the caption and the alt text
+in the voice of your [`voice.md`](examples/voice.md), checks the result
+(every number must appear in your file, no em dashes, none of your retired
+phrases, your hashtag limit) and sends problems back to the model, renders
+each slide in your theme, and files the carousel and its Story as drafts
+with recommended times. Open the queue, read it, change a line on a slide
+if you like (only that slide is re-rendered), and approve.
+
+`--template explainer | spotlight | stat | list | story-only` changes the
+shape ([docs/templates.md](docs/templates.md)); `--dry-run` shows the plan
+and the brief without calling anything. A run costs a few cents and is
+logged; `[llm].monthly_usd` in `postdesk.toml` is the ceiling.
+
 ## Running it every day
 
 The publisher runs inside the app every 15 minutes within the hours you
@@ -152,8 +180,18 @@ editing a caption by hand and for the settings.
 - **The queue by hand.** `postdesk queue`, `postdesk suggest-times`
   (recommended times for drafts that have none), and the HTTP API at
   `/api/docs`.
-- *Coming:* your voice file ([`examples/voice.md`](examples/voice.md)),
-  your theme, post templates, model choice and a monthly spend ceiling.
+- **Your voice.** Copy [`examples/voice.md`](examples/voice.md) next to
+  `postdesk.toml` and rewrite it; the maker reads the whole file before it
+  writes. `[voice]` sets the hashtags it may use and the phrases it may not.
+- **Your look.** A theme is a folder of colours, fonts and a wordmark;
+  copy the default and point `[theme]` at yours ([docs/themes.md](docs/themes.md)).
+- **The shape of a post.** Six templates are built in; add a YAML file to
+  `templates/` for your own ([docs/templates.md](docs/templates.md)).
+- **Where posts come from.** A Markdown file or folder today, with the
+  front matter in [docs/sources.md](docs/sources.md); a feed and a link
+  with the planner.
+- **Model and spend.** `[llm]` picks the model and effort per agent and
+  sets a monthly ceiling, after which the agents stop.
 
 ## What it will never do
 
@@ -168,7 +206,7 @@ editing a caption by hand and for the settings.
 
 ## Hosting it
 
-It is one small service and a database (the slide renderer joins in M1).
+It is two small services (the app and the slide renderer) and a database.
 [docs/deploy.md](docs/deploy.md) has recipes for a VPS with Docker
 Compose, Fly.io, Railway and Render, and explains the one requirement
 Instagram imposes: your slide images must be fetchable from a public URL,

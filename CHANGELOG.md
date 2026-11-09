@@ -2,6 +2,44 @@
 
 ## Unreleased
 
+### M1, the maker
+
+- `postdesk make article.md`: a Markdown file (front matter for the title,
+  date, summary, link, a photo with its credit, named figures, subjects,
+  table rows) becomes a rendered carousel and its Story as drafts in the
+  queue, with recommended times. `--template`, `--plan` for a one-off
+  plan, `--dry-run` to see the brief without calling anything.
+- The slide renderer, `@postdesk/renderer`: a Node service (satori and
+  resvg, no browser) with eight slide types (`cover`, `caption`,
+  `statement`, `stat`, `table`, `label`, `cta`, `story`), `POST /render`
+  behind a bearer token, `GET /health`, `GET /themes`, a `render` CLI, and
+  a theme format (palette, fonts, wordmark, handle) with a new default
+  theme. Its JSON schema is shipped in the Python package too, so a spec is
+  checked before it is sent.
+- Six post templates as YAML (`article`, `explainer`, `spotlight`, `stat`,
+  `list`, `story-only`), each a sequence of typed slides with a brief, the
+  fields the model fills and the ones fixed from the facts; a `templates/`
+  folder for your own.
+- Copy writing through one structured Claude call with the voice file in
+  the (cached) system prompt, then the checks: every slot answered, every
+  number present in the source, field limits, no em dash, retired phrases,
+  the caption lint, alt text per slide; problems go back to the model,
+  twice at most.
+- Sources: `markdown` (a file or folder) and `manual`, behind the
+  `postdesk.sources` entry point for others.
+- `postdesk.llm`: one shape for every agent turn (structured output,
+  retries on transient errors, refusals and cut-off replies as failed
+  turns), model and effort per agent from `[llm]`, every call logged on
+  the new `agent_run` table with tokens and cost, and the monthly ceiling
+  that stops the agents.
+- `PATCH /api/posts/{id}` takes `slides: [{index, fields}]`: the words on
+  a made slide are checked against the post's numbers and that slide alone
+  is re-rendered. The post editor shows them in a "Words on slide" panel.
+- `postdesk doctor` checks the renderer (health and a test render);
+  `postdesk render` and `postdesk templates`. Docker Compose gains the
+  `renderer` service; CI tests the renderer and renders a slide from the
+  image.
+
 ### M0, the scheduler
 
 - The queue: file a draft with a recommended time, edit it, approve it with

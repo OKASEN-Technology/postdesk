@@ -226,3 +226,5 @@ src/postdesk/static/
 web/node_modules/
 web/tsconfig.tsbuildinfo
 .claude/
+renderer/node_modules/
+renderer/*.tsbuildinfo

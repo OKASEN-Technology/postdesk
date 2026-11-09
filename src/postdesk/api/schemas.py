@@ -13,6 +13,18 @@ class Slide(BaseModel):
     asset_id: str
     alt_text: str = ""
     url: str | None = None  # filled on read: the /media URL
+    # A made slide's render spec, and the words on it a PATCH may change
+    # (maker.SLIDE_COPY). Both None for an uploaded slide.
+    spec: dict | None = None
+    words: dict | None = None
+
+
+class SlidePatch(BaseModel):
+    """New words for one made slide: `fields` is copy field -> text; an
+    empty string clears the field. The slide is re-rendered."""
+
+    index: int = Field(ge=0)
+    fields: dict[str, str]
 
 
 class PostItem(BaseModel):
@@ -73,6 +85,7 @@ class PostUpdate(BaseModel):
     title: str | None = None
     caption: str | None = None
     alt_texts: list[str] | None = None
+    slides: list[SlidePatch] | None = None
 
 
 class PostApprove(BaseModel):

@@ -1,0 +1,45 @@
+{
+  "name": "@postdesk/renderer",
+  "version": "0.1.0",
+  "description": "postdesk's slide renderer: a slide spec (JSON) in, a JPEG out, in your theme.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "bin": {
+    "postdesk-renderer": "dist/cli.js"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "schema",
+    "themes",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/cli.js",
+    "dev": "tsx src/cli.ts",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@resvg/resvg-js": "^2.6.2",
+    "ajv": "^8.17.1",
+    "jpeg-js": "^0.4.4",
+    "satori": "^0.63.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/OKASEN-Technology/postdesk",
+    "directory": "renderer"
+  }
+}

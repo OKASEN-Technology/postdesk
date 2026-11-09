@@ -1,0 +1,62 @@
+# One subject (a person, a product, a place): a label slide as the cover
+# with their picture, their story, a number, a facts panel, the ask.
+# Needs a subject in the facts (front matter `subjects:`).
+name: spotlight
+description: A subject's picture as the cover, their story, a number, a facts panel, a call to action, and a Story.
+kind: carousel
+kicker: "{{ facts.extra.kicker or 'Spotlight' }}"
+requires:
+  - path: facts.subjects.0
+    message: "a spotlight needs a subject (front matter `subjects:` with a name, and ideally an image with a credit)"
+
+slides:
+  - type: label
+    brief: >-
+      The cover, about {{ facts.subjects.0.name }}. line1: who or what they are in one line, max 70
+      characters. line2: why now, max 80 characters.
+    fields: [line1, line2]
+    fixed:
+      tag: "Spotlight"
+      tag_tone: neutral
+      kicker: "{{ kicker }}"
+      name: "{{ facts.subjects.0.name }}"
+      meta: "{{ facts.subjects.0.meta }}"
+      link: "{{ facts.subjects.0.link or facts.url or account.site }}"
+      image: "{{ facts.subjects.0.image or facts.hero }}"
+
+  - type: statement
+    brief: "Their story: where they started, what they do, what they are known for."
+    fields: [headline, headline_em, body, source]
+    fixed: { kicker: "{{ facts.subjects.0.role or 'The story' }}" }
+
+  - type: stat
+    optional: true
+    brief: >-
+      One number that sums them up, verbatim from the piece or the data ('3 a week', '2019'). `figure_sub`
+      says what it is. Leave figure empty if there is none and the slide is dropped.
+    fields: [figure, figure_sub, kicker, note, source]
+
+  - type: label
+    brief: "line1: what to watch for next, max 70 characters. line2: one specific fact, max 80, or empty."
+    fields: [line1, line2]
+    fixed:
+      tag: "{{ facts.subjects.0.role or 'Spotlight' }}"
+      tag_tone: neutral
+      kicker: "In brief"
+      name: "{{ facts.subjects.0.name }}"
+      meta: "{{ facts.subjects.0.meta }}"
+      link: "{{ facts.subjects.0.link or facts.url or account.site }}"
+      facts: "{{ facts.subjects.0.facts }}"
+
+  - type: cta
+    brief: >-
+      One action: the full piece via the link in bio. `headline` is the start, `headline_em` the last 2 or 3
+      words in italic.
+    fields: [headline, headline_em, body]
+    fixed: { kicker: "{{ kicker }}" }
+
+story:
+  brief: "A 9:16 companion: {{ facts.subjects.0.name }} in a headline of 3 to 8 words, one line on what is behind the link."
+  fields: [headline, line]
+  fixed:
+    image: "{{ facts.subjects.0.image or facts.hero }}"

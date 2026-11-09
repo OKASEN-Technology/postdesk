@@ -1,11 +1,36 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { api, errorText, type Config, type Lint, type Post } from "../api";
+import { api, errorText, type Config, type Lint, type Post, type SlidePatch } from "../api";
 import { fmt, fromLocalInput, insidePublisherHours, toLocalInput } from "../time";
 import { Badge, CARD, DANGER, ErrorNote, INPUT, LABEL, PRIMARY, SECONDARY } from "../ui";
 
 const MAX_CAPTION = 2200;
 const MORE_CUT = 125;
+/** The fields that read better in a box than on a line. */
+const LONG_FIELDS = new Set(["body", "text", "line", "sub", "figure_sub", "line1", "line2"]);
+const FIELD_NAMES: Record<string, string> = {
+  kicker: "Kicker", kicker_sub: "After the kicker", headline: "Headline", headline_em: "Headline, in italic",
+  sub: "Line under the headline", body: "Body", source: "Source line", figure: "Figure", figure_sub: "What the figure is",
+  note: "Note", line1: "First line", line2: "Second line", line: "Line", text: "Text over the photo",
+};
+
+/** The words on a made slide, editable; saving re-renders that slide. */
+function SlideWords({ words, onChange }: { words: Record<string, string>; onChange: (field: string, value: string) => void }) {
+  return (
+    <div className="mt-2 space-y-2">
+      {Object.entries(words).map(([field, value]) => (
+        <label key={field} className="block text-xs text-ink-2">
+          {FIELD_NAMES[field] ?? field}
+          {LONG_FIELDS.has(field) ? (
+            <textarea value={value} rows={2} className={INPUT} onChange={(e) => onChange(field, e.target.value)} />
+          ) : (
+            <input value={value} className={INPUT} onChange={(e) => onChange(field, e.target.value)} />
+          )}
+        </label>
+      ))}
+    </div>
+  );
+}
 
 /** The caption's checks: the server's lint (the same one the queue
  * applies) plus what only matters in the feed. */
@@ -42,6 +67,7 @@ export default function PostEditor({ config }: { config: Config }) {
   const [caption, setCaption] = useState("");
   const [title, setTitle] = useState("");
   const [alts, setAlts] = useState<string[]>([]);
+  const [words, setWords] = useState<(Record<string, string> | null)[]>([]);
   const [slide, setSlide] = useState(0);
   const [publishAt, setPublishAt] = useState("");
   const [busy, setBusy] = useState(false);
@@ -52,6 +78,7 @@ export default function PostEditor({ config }: { config: Config }) {
     setCaption(p.caption);
     setTitle(p.title);
     setAlts(p.slides.map((s) => s.alt_text));
+    setWords(p.slides.map((s) => (s.words ? { ...s.words } : null)));
     setPublishAt(toLocalInput(p.publish_at ?? new Date(Date.now() + 86400000).toISOString(), tz));
   }, [tz]);
 
@@ -76,7 +103,14 @@ export default function PostEditor({ config }: { config: Config }) {
   if (!post) return <p className="text-sm text-ink-3">Loading…</p>;
 
   const editable = post.status === "draft";
-  const dirty = caption !== post.caption || title !== post.title || alts.some((a, i) => a !== post.slides[i]?.alt_text);
+  const wordPatches: SlidePatch[] = words.flatMap((w, i) => {
+    const was = post.slides[i]?.words;
+    if (!w || !was) return [];
+    const fields = Object.fromEntries(Object.entries(w).filter(([k, v]) => v !== (was[k] ?? "")));
+    return Object.keys(fields).length ? [{ index: i, fields }] : [];
+  });
+  const dirty = caption !== post.caption || title !== post.title || alts.some((a, i) => a !== post.slides[i]?.alt_text)
+    || wordPatches.length > 0;
   const tall = post.kind === "story";
   const current = post.slides[slide];
   const missingAlt = post.kind === "story" ? 0 : alts.filter((a) => !a.trim()).length;
@@ -97,7 +131,10 @@ export default function PostEditor({ config }: { config: Config }) {
     }
   }
 
-  const edits = () => ({ title, caption: post.kind === "story" ? undefined : caption, alt_texts: alts });
+  const edits = () => ({
+    title, caption: post.kind === "story" ? undefined : caption, alt_texts: alts,
+    slides: wordPatches.length ? wordPatches : undefined,
+  });
   const save = () => run(() => api.updatePost(post.id, edits()));
   const approve = () => run(async () => {
     if (dirty) await api.updatePost(post.id, edits());
@@ -157,6 +194,28 @@ export default function PostEditor({ config }: { config: Config }) {
         </section>
 
         <div className="min-w-0 space-y-4">
+          {current?.words && (
+            <section className={CARD}>
+              <p className={LABEL}>Words on slide {slide + 1} · {String(current.spec?.type ?? "")}</p>
+              {editable ? (
+                <>
+                  <SlideWords words={words[slide] ?? {}}
+                              onChange={(field, value) => setWords((prev) => prev.map((w, j) => (j === slide && w ? { ...w, [field]: value } : w)))} />
+                  <p className="mt-2 text-xs text-ink-3">
+                    Saving re-renders this slide. A number that is not in the source is refused; pictures, rows and links
+                    need a new make.
+                  </p>
+                </>
+              ) : (
+                <dl className="mt-1 space-y-1 text-sm text-ink-2">
+                  {Object.entries(current.words).filter(([, v]) => v).map(([k, v]) => (
+                    <div key={k}><dt className="inline text-xs text-ink-3">{FIELD_NAMES[k] ?? k}: </dt><dd className="inline">{v}</dd></div>
+                  ))}
+                </dl>
+              )}
+            </section>
+          )}
+
           <section className={CARD}>
             <p className={LABEL}>Alt text · slide {slide + 1}</p>
             {editable ? (

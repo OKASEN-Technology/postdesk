@@ -1,0 +1,44 @@
+# A ranked or ordered list: cover, the table, the ask. The rows come from
+# front matter `rows:` ([{rank, name, delta}] or [{rank, name, value}]).
+name: list
+description: A cover, the list as a table, a call to action, and a Story.
+kind: carousel
+kicker: "{{ facts.extra.kicker or 'The list' }}"
+requires:
+  - path: facts.extra.rows
+    message: "a list needs its rows (front matter `rows:` with rank and name, and a delta or a value)"
+
+slides:
+  - type: cover
+    if: facts.hero
+    brief: "The hook: a headline of 6 words or fewer, one line of promise under it."
+    fields: [headline, sub]
+    fixed: { kicker: "{{ kicker }}", kicker_sub: "{{ month }}", image: "{{ facts.hero }}", link: "{{ account.site }}" }
+
+  - type: cover
+    unless: facts.hero
+    brief: >-
+      The hook: a headline of 6 words or fewer, one line of promise under it. No photo, so `figure` fills the
+      top half: how many are on the list, or the top entry's number, or empty.
+    fields: [headline, sub, figure]
+    fixed: { kicker: "{{ kicker }}", kicker_sub: "{{ month }}", link: "{{ account.site }}" }
+
+  - type: table
+    brief: "No copy needed beyond the headline over the table, e.g. 'The top five'."
+    fields: [headline]
+    fixed:
+      kicker: "{{ kicker }}"
+      rows: "{{ facts.extra.rows }}"
+      footer_left: "{{ facts.extra.footer or facts.summary }}"
+      footer_right: "{{ account.site }}"
+
+  - type: cta
+    brief: >-
+      One action: the full list via the link in bio. `headline` is the start, `headline_em` the last 2 or 3
+      words in italic.
+    fields: [headline, headline_em, body]
+    fixed: { kicker: "{{ kicker }}" }
+
+story:
+  brief: "A 9:16 companion: the list in a headline of 3 to 8 words, one line on what is behind the link."
+  fields: [headline, line]
