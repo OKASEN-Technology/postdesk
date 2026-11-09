@@ -27,7 +27,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     """`.env`. Names match the variables there, lower-cased."""
 
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    # POSTDESK_ENV_FILE moves it; the test suite points it at nothing so a
+    # developer's own .env never reaches a test.
+    model_config = SettingsConfigDict(env_file=os.environ.get("POSTDESK_ENV_FILE", ".env"), extra="ignore")
 
     anthropic_api_key: str | None = None
     telegram_bot_token: str | None = None

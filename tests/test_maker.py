@@ -145,6 +145,15 @@ def test_every_built_in_template_plans_the_sequence_it_promises():
     assert rows[1].fixed["rows"] == f.extra["rows"] and rows[1].fixed["footer_right"] == config.account.site
 
 
+def test_a_blank_site_leaves_the_link_off_rather_than_empty(monkeypatch):
+    # Before `postdesk init` the site is "". An empty fixed field is dropped,
+    # so the renderer gets no link at all instead of a blank one.
+    monkeypatch.setattr(config.account, "site", "")
+    _, slots, story = maker.plan(maker.load_template("article"), _facts())
+    assert "link" not in slots[0].fixed and "kicker" in slots[0].fixed
+    assert story is not None and "link" not in story.fixed
+
+
 def test_a_hero_changes_the_cover_and_the_story():
     f = _facts(hero=SourceImage(url="https://example.com/crumb.jpg", credit="Photo: Jo Baker"))
     _, slots, _story = maker.plan(maker.load_template("article"), f)
