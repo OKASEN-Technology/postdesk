@@ -43,7 +43,7 @@ export default function Preview({ config }: { config: Config }) {
       <p className="text-xs font-semibold uppercase tracking-[0.12em] text-moss">{concept ? "Concept preview" : "Draft preview"}</p>
       <h1 className="mt-1 text-2xl font-semibold tracking-tight">Instagram preview</h1>
       <p className="mt-2 text-sm leading-relaxed text-ink-2">{concept
-        ? "A first look using the proposed image. The final slides and caption are created after you approve the idea."
+        ? "A first look at the planned slides and any selected images. The final slides and caption are created after you approve the idea."
         : "A preview of your draft. Instagram may display it a little differently."}</p>
     </div>
     <article aria-label="Instagram post preview" className="overflow-hidden rounded-lg border border-line bg-white text-[#171717] shadow-sm">
