@@ -206,7 +206,7 @@ function ModelRow({ label, value, data, onChange }: {
   return (
     <div className="grid grid-cols-[6rem_1fr_7rem] items-center gap-2 text-sm">
       <span className="text-ink-2">{label}</span>
-      <select className={`${INPUT} mt-0`} value={value.model} onChange={(e) => onChange({ ...value, model: e.target.value })}>
+      <select className={`${INPUT} mt-0`} aria-label={`${label} model`} value={value.model} onChange={(e) => onChange({ ...value, model: e.target.value })}>
         {[...new Set([value.model, ...data.choices.models])].map((m) => <option key={m}>{m}</option>)}
       </select>
       <select className={`${INPUT} mt-0`} value={value.effort} onChange={(e) => onChange({ ...value, effort: e.target.value })}
@@ -222,7 +222,7 @@ function Models({ data, save }: SectionProps) {
   const set = (k: "partner" | "editor" | "maker" | "pick") => (v: ModelChoice) => setLlm({ ...llm, [k]: v });
   return (
     <Panel title="Models" section="llm" data={data} save={save} patch={() => llm}
-           note="Which Claude model each agent uses, and how hard it thinks. The ceiling stops every agent for the rest of the month.">
+           note="Choose an OpenAI or Claude model for each agent. Set the matching API key on the server. The monthly ceiling stops agents when reached.">
       <ModelRow label="Partner" value={llm.partner} data={data} onChange={set("partner")} />
       <ModelRow label="Editor" value={llm.editor} data={data} onChange={set("editor")} />
       <ModelRow label="Maker" value={llm.maker} data={data} onChange={set("maker")} />

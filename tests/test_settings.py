@@ -30,10 +30,18 @@ def test_settings_show_the_values_and_the_choices(http):
     assert d["values"]["llm"]["partner"]["model"] == "claude-opus-5-5"
     assert d["values"]["voice"]["from_file"] is True
     assert "wikimedia" in d["choices"]["image_sources"] and "claude-haiku-5-5" in d["choices"]["models"]
+    assert "gpt-6.1-sol" in d["choices"]["models"]
     assert d["telegram"] == {"configured": False, "linked": None, "mode": None}
     assert d["spend"] == {"month_usd": 0, "ceiling_usd": 30, "over": False}
     assert d["overridden"] == {}
     assert [n["name"] for n in d["notifiers"]] == ["slack", "webhook", "email"]
+
+
+def test_openai_model_selection_is_saved(http):
+    selected = {"model": "gpt-6.1-sol", "effort": "low"}
+    response = http.put("/api/settings", json={"llm": {"maker": selected}})
+    assert response.status_code == 200
+    assert http.get("/api/settings").json()["values"]["llm"]["maker"] == selected
 
 
 def test_an_edit_applies_at_once_and_null_goes_back_to_the_file(http, session):

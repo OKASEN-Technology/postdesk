@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=os.environ.get("POSTDESK_ENV_FILE", ".env"), extra="ignore")
 
     anthropic_api_key: str | None = None
+    openai_api_key: str | None = None
     telegram_bot_token: str | None = None
 
     meta_app_id: str | None = None
