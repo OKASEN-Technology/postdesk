@@ -1,0 +1,157 @@
+"""
+`postdesk doctor`: what is still missing, in the order it has to be fixed.
+Each check says what it found and, when it fails, what to do. The only
+outbound calls are the Instagram `whoami` and one fetch of a test asset
+from the public URL; nothing phones home.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+import httpx
+from sqlalchemy import text
+
+from postdesk import instagram as ig
+from postdesk import storage
+from postdesk.config import config, settings
+from postdesk.db import migrate
+from postdesk.db.session import SessionLocal, engine
+
+
+@dataclass
+class Check:
+    name: str
+    ok: bool
+    detail: str
+    fix: str | None = None
+    warn: bool = False  # a problem that does not stop posting
+
+
+def check_claude_key() -> Check:
+    if settings.anthropic_api_key:
+        return Check("Claude key", True, "ANTHROPIC_API_KEY is set (not called)")
+    return Check("Claude key", False, "ANTHROPIC_API_KEY is empty",
+                 "Get a key at https://platform.claude.com/ and put it in .env. The scheduler works without it; "
+                 "the writer (M1) needs it.", warn=True)
+
+
+def check_config() -> Check:
+    if config.path:
+        return Check("postdesk.toml", True, f"{config.path} (timezone {config.account.timezone})")
+    return Check("postdesk.toml", False, "not found; defaults in use (timezone UTC)",
+                 "Run `postdesk init`, or copy examples/postdesk.toml next to .env and edit it.", warn=True)
+
+
+def check_database() -> Check:
+    try:
+        with engine().connect() as conn:
+            conn.execute(text("select 1"))
+    except Exception as e:
+        return Check("Database", False, f"{settings.database_url.split('@')[-1]}: {type(e).__name__}",
+                     "Check DATABASE_URL in .env. With Docker Compose: `docker compose up -d db`.")
+    return Check("Database", True, f"reachable at {settings.database_url.split('@')[-1]}")
+
+
+def check_migrations() -> Check:
+    try:
+        current, head = migrate.current_and_head(engine())
+    except Exception as e:
+        return Check("Migrations", False, f"could not read: {e}", "Run `postdesk db upgrade`.")
+    if current == head:
+        return Check("Migrations", True, f"current ({head})")
+    return Check("Migrations", False, f"database at {current or 'nothing'}, code expects {head}",
+                 "Run `postdesk db upgrade`.")
+
+
+def check_instagram(graph: ig.Graph | None = None) -> Check:
+    if not (settings.instagram_access_token or (settings.instagram_page_token and settings.instagram_user_id)):
+        return Check("Instagram", False, "no token in .env",
+                     "Follow docs/instagram-setup.md, then run `postdesk instagram page-token`.")
+    try:
+        from postdesk.instagram.setup import expiry, whoami
+
+        acct, info, used, total = whoami(graph or ig.Graph())
+    except ig.InstagramError as e:
+        return Check("Instagram", False, str(e), "See docs/troubleshooting.md \"Token\".")
+    detail = f"@{acct.username}, {acct.token_kind} token expires {expiry(info)}, {used}/{total} posts used today"
+    if acct.token_kind == "user":
+        return Check("Instagram", True, detail,
+                     "The user token expires in 60 days. Run `postdesk instagram page-token` for one that does not.",
+                     warn=True)
+    return Check("Instagram", True, detail)
+
+
+def check_storage(client: httpx.Client | None = None) -> Check:
+    """Store a tiny JPEG and fetch it back from the public URL, as Instagram
+    would. The test asset is content-addressed, so it is one row forever."""
+    where = storage.backend()
+    base = settings.storage_s3_public_base_url if where == "s3" else settings.public_base_url
+    try:
+        ig.check_public(base or "")
+    except ig.InstagramError as e:
+        return Check("Public storage", False, str(e).split(". ")[0],
+                     "Set PUBLIC_BASE_URL to the address this app is reachable at from the internet, or fill in the "
+                     "STORAGE_S3_* variables (docs/deploy.md).")
+    data = TEST_JPEG
+    try:
+        with SessionLocal() as session:
+            asset = storage.store_asset(session, data=data, filename="doctor.jpg", content_type="image/jpeg",
+                                        uploaded_by="doctor", provenance={"source": "doctor"})
+            url = storage.public_url(asset)
+            if where == "local":
+                _ensure_referenced(session, asset)
+    except Exception as e:
+        return Check("Public storage", False, f"could not store a test file on {where}: {e}",
+                     "Check the storage settings in .env and the data volume.")
+    try:
+        resp = (client or httpx.Client(timeout=15)).get(url, follow_redirects=True)
+    except httpx.HTTPError as e:
+        return Check("Public storage", False, f"{url}: {e}",
+                     "The address is not reachable from this machine. Is the app running there, and the port open?")
+    if resp.status_code != 200 or not resp.headers.get("content-type", "").startswith("image/jpeg"):
+        return Check("Public storage", False, f"{url} answered {resp.status_code}",
+                     "Instagram fetches slides from this URL. Check PUBLIC_BASE_URL (or the bucket's public access).")
+    return Check("Public storage", True, f"{where}: {url} serves the test image")
+
+
+def _ensure_referenced(session, asset) -> None:
+    """`/media/<id>` only serves assets a post references, so the doctor's
+    test image is pinned by a rejected marker post nobody sees."""
+    from datetime import UTC, datetime
+
+    from sqlalchemy import select
+
+    from postdesk.db.models import SocialPost
+
+    exists = session.execute(select(SocialPost.id).where(SocialPost.created_by == "doctor")).first()
+    if exists:
+        return
+    now = datetime.now(UTC)
+    session.add(SocialPost(kind="image", status="rejected", title="doctor: storage check", caption="",
+                           slides=[{"asset_id": str(asset.id), "alt_text": "A test image."}],
+                           created_by="doctor", created_at=now, updated_at=now))
+    session.commit()
+
+
+def _tiny_jpeg() -> bytes:
+    import io
+
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", (8, 8), (240, 240, 240)).save(buf, format="JPEG")
+    return buf.getvalue()
+
+
+TEST_JPEG = _tiny_jpeg()
+
+
+def run(*, graph: ig.Graph | None = None) -> list[Check]:
+    checks = [check_claude_key(), check_config(), check_database()]
+    if checks[-1].ok:
+        checks.append(check_migrations())
+        if checks[-1].ok:
+            checks.append(check_instagram(graph))
+            checks.append(check_storage())
+    return checks
