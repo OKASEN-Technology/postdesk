@@ -4,7 +4,12 @@
 export type Kind = "image" | "carousel" | "story" | "reel";
 export type Status = "draft" | "approved" | "publishing" | "published" | "failed" | "rejected";
 
-export interface Slide { asset_id: string; alt_text: string; url: string | null }
+export interface Slide {
+  asset_id: string; alt_text: string; url: string | null;
+  /** A made slide's render spec and the words on it that can be changed (null for an uploaded slide). */
+  spec: Record<string, unknown> | null; words: Record<string, string> | null;
+}
+export interface SlidePatch { index: number; fields: Record<string, string> }
 
 export interface Post {
   id: string; channel: string; kind: Kind; status: Status; title: string; caption: string;
@@ -62,7 +67,7 @@ export const api = {
   getPost: (id: string) => call<Post>(`/api/posts/${id}`),
   createPost: (body: { kind: Kind; title: string; caption: string; slides: { asset_id: string; alt_text: string }[]; source_ref?: string | null }) =>
     call<Post>("/api/posts", json("POST", body)),
-  updatePost: (id: string, body: { title?: string; caption?: string; alt_texts?: string[] }) =>
+  updatePost: (id: string, body: { title?: string; caption?: string; alt_texts?: string[]; slides?: SlidePatch[] }) =>
     call<Post>(`/api/posts/${id}`, json("PATCH", body)),
   approve: (id: string, publish_at: string) => call<Post>(`/api/posts/${id}/approve`, json("POST", { publish_at })),
   action: (id: string, what: "unapprove" | "reject" | "back-to-draft") => call<Post>(`/api/posts/${id}/${what}`, json("POST")),
