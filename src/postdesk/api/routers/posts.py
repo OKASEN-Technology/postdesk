@@ -33,6 +33,8 @@ TOTAL_COUNT_HEADER = "X-Total-Count"
 
 
 def item(post: SocialPost) -> PostItem:
+    from postdesk.telegram.commands import image_field
+
     return PostItem(
         id=str(post.id),
         channel=post.channel,
@@ -41,7 +43,8 @@ def item(post: SocialPost) -> PostItem:
         title=post.title,
         caption=post.caption,
         slides=[Slide(asset_id=s["asset_id"], alt_text=s.get("alt_text", ""), url=asset_url(s["asset_id"]),
-                      spec=s.get("spec"), words=maker.slide_words(s.get("spec")))
+                      spec=s.get("spec"), words=maker.slide_words(s.get("spec")),
+                      can_replace_image=bool(image_field(s)))
                 for s in post.slides],
         card_id=str(post.card_id) if post.card_id else None,
         source_ref=post.source_ref,
@@ -150,7 +153,11 @@ def lint_caption(body: dict) -> CaptionLint:
     """The same checks the queue applies, for the editor to show as you type."""
     caption = str(body.get("caption", ""))
     errors, warnings = ig.lint_caption(caption)
-    return CaptionLint(errors=errors, warnings=warnings, hashtags=len(ig.hashtags(caption)))
+    from twitter_text import parse_tweet
+
+    return CaptionLint(errors=errors, warnings=warnings, hashtags=len(ig.hashtags(caption)),
+                       characters=len(caption), x_weighted_characters=parse_tweet(caption).weightedLength,
+                       max_characters=ig.SHARED_CAPTION_MAX)
 
 
 @router.get("/{post_id}", response_model=PostItem)
@@ -174,6 +181,49 @@ def update_post(post_id: uuid.UUID, body: PostUpdate, actor: str = Depends(requi
     return _run(queue.update_post, session, post_id, title=body.title, caption=body.caption, alt_texts=body.alt_texts)
 
 
+@router.post("/{post_id}/slides/{index}/image", response_model=PostItem)
+def replace_slide_image(post_id: uuid.UUID, index: int, body: dict, actor: str = Depends(require_auth),
+                        session: Session = Depends(get_session)) -> PostItem:
+    """Replace a rendered slide picture while retaining the design and its other content."""
+    from postdesk import brand_library, storage
+    from postdesk.board import cards, transitions
+    from postdesk.db.models import Card
+    post = session.get(SocialPost, post_id)
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found.")
+    if post.status != "draft" or not 0 <= index < len(post.slides):
+        raise HTTPException(status_code=409, detail="This slide is no longer an editable draft.")
+    if body.get("expected_asset_id") != post.slides[index].get("asset_id"):
+        raise HTTPException(status_code=409, detail="This slide changed. Reload it before choosing an image.")
+    if post.card_id:
+        card = session.get(Card, post.card_id)
+        if card and card.column not in ("On hold", "Awaiting approval"):
+            raise HTTPException(status_code=409,
+                                detail="Wait for the current work to finish before editing this image.")
+    asset_id = body.get("asset_id")
+    if body.get("brand_key"):
+        try:
+            brand_item = next(x for x in brand_library.available(session) if x["key"] == body["brand_key"]
+                              and x["enabled"] and x["type"] == "image")
+            from postdesk.telegram.commands import brand_image_bytes
+            jpeg, _ = ig.to_jpeg_bytes(brand_image_bytes(session, brand_item))
+            asset = storage.store_asset(session, data=jpeg, filename="brand-image.jpg", content_type="image/jpeg",
+                                        uploaded_by=actor, provenance={"source": "Brand library"})
+            asset_id = str(asset.id)
+        except Exception as exc:
+            raise HTTPException(status_code=422, detail="That brand image is unavailable. Choose another.") from exc
+    if not asset_id:
+        raise HTTPException(status_code=422, detail="Choose an image first.")
+    try:
+        result = maker.revise(session, post_id, images=[{"index": index, "asset_id": asset_id}], by=actor)
+    except (queue.QueueError, ValueError, maker.MakerError, maker.RenderError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if post.card_id and card:
+        cards.comment(session, card, "user", f"Changed image on slide {index + 1}. Review the image and alt text.")
+        transitions.hold(session, card, actor=actor, note=transitions.IMAGE_EDIT_HOLD)
+    return item(result)
+
+
 def _then_board(result: PostItem, session: Session, actor: str) -> PostItem:
     """A card's post changed in the queue screens: the card follows
     (board/sync.py `queue_changed`), with the admin as the actor."""
@@ -187,8 +237,38 @@ def _then_board(result: PostItem, session: Session, actor: str) -> PostItem:
 @router.post("/{post_id}/approve", response_model=PostItem)
 def approve_post(post_id: uuid.UUID, body: PostApprove, actor: str = Depends(require_auth),
                  session: Session = Depends(get_session)) -> PostItem:
-    result = _run(queue.approve, session, post_id, publish_at=body.publish_at, approved_by=body.approved_by or actor)
+    result = _run(queue.approve, session, post_id, publish_at=body.publish_at, approved_by=body.approved_by or actor,
+                  crosspost_x=body.crosspost_x)
     return _then_board(result, session, actor)
+
+
+
+@router.post("/{post_id}/x-upload-check")
+def x_upload_check(post_id: uuid.UUID, session: Session = Depends(get_session)) -> dict:
+    """Test X media access with this post's first image; never creates a post."""
+    from postdesk import storage
+    from postdesk.db.models import ContentAsset
+    from postdesk.x.client import XClient, XError
+    from postdesk.x.credentials import read
+
+    post = session.get(SocialPost, post_id)
+    if post is None or post.channel != "instagram" or not post.slides:
+        raise HTTPException(status_code=404, detail="Instagram image not found.")
+    asset = session.get(ContentAsset, uuid.UUID(str(post.slides[0]["asset_id"])))
+    try:
+        auth = read(session)
+        if auth is None or asset is None:
+            raise HTTPException(status_code=409, detail="X connection or image is unavailable.")
+        XClient(auth).upload_image(storage.asset_bytes(asset))
+    except (XError, ValueError, OSError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, "detail": "X accepted the image; no post was created."}
+
+
+@router.post("/{post_id}/crosspost-x", response_model=PostItem)
+def crosspost_published_x(post_id: uuid.UUID, actor: str = Depends(require_auth),
+                          session: Session = Depends(get_session)) -> PostItem:
+    return _run(queue.crosspost_published_to_x, session, post_id, approved_by=actor)
 
 
 @router.post("/{post_id}/unapprove", response_model=PostItem)

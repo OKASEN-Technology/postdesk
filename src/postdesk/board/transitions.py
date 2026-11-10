@@ -80,6 +80,8 @@ def approve(session: Session, card: Card, *, actor: str, note: str | None = None
     goes back to the partner first."""
     cards.check_move(session, card, "Approved", actor=actor, allowed_from=("Planned", "Brief ready", "On hold"),
                      reason=note)
+    if card.column == "On hold" and posts.drafts(session, card.id):
+        raise BoardError("This card already has drafts. Review and approve the current draft instead of remaking it.")
     if note:
         cards.comment(session, card, "user", note, commit=False)
     if not card.brief_md and not card.plan.get("post") and not posts.drafts(session, card.id):
@@ -88,6 +90,12 @@ def approve(session: Session, card: Card, *, actor: str, note: str | None = None
                                                "approve it again once it is at Brief ready.")
         jobs.enqueue(session, "partner", card.id,
                      {"reason": "the card was approved before it had a brief: write it"})
+        return card
+    if posts.drafts(session, card.id):
+        set_column(session, card, "Making", actor=actor, reason="approved revised brief; update existing drafts")
+        latest = next((c.body_md for c in reversed(cards.thread(session, card)) if c.author == "user"), "")
+        instruction = "Apply the approved revised brief and guidance to the existing drafts. The user requested: "
+        jobs.enqueue(session, "revise", card.id, {"note": instruction + latest + " " + (note or ""), "from": "user"})
         return card
     set_column(session, card, "Approved", actor=actor, reason=note or "approved")
     jobs.enqueue(session, "make", card.id)
@@ -124,16 +132,17 @@ def back_to_partner(session: Session, card: Card, *, actor: str, note: str | Non
     return card
 
 
-def schedule(session: Session, card: Card, *, actor: str, when: datetime | None = None) -> list[SocialPost]:
+def schedule(session: Session, card: Card, *, actor: str, when: datetime | None = None,
+             crosspost_x: bool = False) -> list[SocialPost]:
     """The second gate: the card's drafts approved in the queue at `when`
     (else the recommended time), then the card to Scheduled."""
     cards.check_move(session, card, "Scheduled", actor=actor, allowed_from=("Awaiting approval",))
     try:
-        approved = posts.schedule(session, card, when=when, approved_by=actor)
+        approved = posts.schedule(session, card, when=when, approved_by=actor, crosspost_x=crosspost_x)
     except (queue.QueueError, LookupError) as e:
         session.rollback()
         raise BoardError(f"not scheduled: {e}") from e
-    times = "; ".join(f"{p.kind} {_when(p.publish_at)}" for p in approved if p.status != "rejected")
+    times = "; ".join(f"{p.channel} {p.kind} {_when(p.publish_at)}" for p in approved if p.status != "rejected")
     set_column(session, card, "Scheduled", actor=actor, reason=f"scheduled: {times}")
     cards.comment(session, card, "system", f"Scheduled: {times}. Unschedule to change the time.")
     return approved
@@ -172,6 +181,27 @@ def hold(session: Session, card: Card, *, actor: str, note: str | None = None) -
     card.stuck_reason = why
     session.commit()
     return card
+
+
+IMAGE_EDIT_HOLD = "Image updated. Review the current draft before scheduling."
+REVISION_HOLD = "Draft updated. Review the changes before scheduling."
+
+
+def accept_review_hold(session: Session, card: Card, *, actor: str) -> Card:
+    """A person accepts the editor's flagged draft; scheduling remains separate."""
+    if not cards.is_human(actor, session):
+        raise BoardError("only the admin can accept a held review")
+    cards.check_move(session, card, "Awaiting approval", actor=actor, allowed_from=("On hold",))
+    review = card.review or {}
+    review_reason = review.get("why") or ""
+    current_reason = card.stuck_reason or ""
+    held_review = (review.get("column") == "On hold" and review_reason and
+                   (current_reason == review_reason or current_reason.startswith(review_reason + ":")))
+    if not (held_review or current_reason in (IMAGE_EDIT_HOLD, REVISION_HOLD)) or not posts.drafts(session, card.id):
+        raise BoardError("there is no held review with drafts to accept")
+    cards.comment(session, card, "user", "Accepted the current draft as is; scheduling remains separate.",
+                  commit=False)
+    return set_column(session, card, "Awaiting approval", actor=actor, reason="accepted held review as is")
 
 
 def send_to_review(session: Session, card: Card, *, actor: str, note: str | None = None) -> Card:
@@ -226,6 +256,8 @@ def move(session: Session, card: Card, column: str, *, actor: str, note: str | N
     if column == "In review":
         return send_to_review(session, card, actor=actor, note=note)
     if column == "Awaiting approval":
+        if card.column == "On hold":
+            return accept_review_hold(session, card, actor=actor)
         return unschedule(session, card, actor=actor)
     if column == "On hold":
         return hold(session, card, actor=actor, note=note)
@@ -420,6 +452,7 @@ def valid_revision(d: dict, drafts: list[SocialPost]) -> tuple[list[dict], list[
         for s in r.get("slides") or []:
             i = s.get("index")
             fields = {k: v for k, v in (s.get("fields") or {}).items() if v is not None}
+            image_key = s.get("image_key")
             if not isinstance(i, int) or not 0 <= i < len(p.slides):
                 problems.append(f"{p.id}: slide index {i} is out of range (0–{len(p.slides) - 1})")
                 continue
@@ -428,13 +461,13 @@ def valid_revision(d: dict, drafts: list[SocialPost]) -> tuple[list[dict], list[
             bad = [f for f in fields if f not in editable]
             if not spec:
                 problems.append(f"{p.id}: slide {i + 1} was uploaded, not made; its words cannot change")
-            elif not fields:
-                problems.append(f"{p.id}: slide {i + 1} has no words to change")
+            elif not fields and not image_key:
+                problems.append(f"{p.id}: slide {i + 1} has no change")
             elif bad:
                 problems.append(f"{p.id}: slide {i + 1} can't change {', '.join(bad)} "
                                 f"(its words are {', '.join(editable)})")
             else:
-                slides.append({"index": i, "fields": fields})
+                slides.append({"index": i, "fields": fields, "image_key": image_key})
         if slides:
             patch["slides"] = slides
         if patch:
@@ -442,7 +475,7 @@ def valid_revision(d: dict, drafts: list[SocialPost]) -> tuple[list[dict], list[
     return out, problems
 
 
-def revise(session: Session, card: Card, d: dict, *, renderer=None) -> Card:
+def revise(session: Session, card: Card, d: dict, *, renderer=None, candidates=None, for_user=False) -> Card:
     """The revision applied (caption, alt text, a slide's words re-rendered
     from its spec; never an image or a new figure), then back to review."""
     from postdesk import maker
@@ -452,15 +485,67 @@ def revise(session: Session, card: Card, d: dict, *, renderer=None) -> Card:
         return card
     drafts = posts.drafts(session, card.id)
     patches, problems = valid_revision(d, drafts)
+    import hashlib
+
+    from postdesk import brand_library, instagram, storage
+    from postdesk.maker.run import needs_theme_refresh
+
+    candidates = {c["key"]: c for c in (candidates or [])}
+    unresolved = list(d.get("unresolved") or [])
+    for patch in patches:
+        words, pictures = [], []
+        for slide in patch.pop("slides", []):
+            key = slide.get("image_key")
+            if slide.get("fields"):
+                words.append({"index": slide["index"], "fields": slide["fields"]})
+            if key:
+                if key not in candidates:
+                    unresolved.append(f"Slide {slide['index'] + 1}: the selected picture is not available.")
+                    continue
+                try:
+                    items = brand_library.available(session)
+                    item = next(x for x in items if x["enabled"] and x["type"] == "image" and
+                                "brand-" + hashlib.sha256(x["key"].encode()).hexdigest()[:16] == key)
+                    from postdesk.telegram.commands import brand_image_bytes
+                    data = brand_image_bytes(session, item)
+                    jpeg, _ = instagram.to_jpeg_bytes(data)
+                    asset = storage.store_asset(session, data=jpeg, filename="brand-revision.jpg",
+                                                content_type="image/jpeg", uploaded_by=MAKER,
+                                                provenance={"source": "Brand library"})
+                    pictures.append({"index": slide["index"], "asset_id": str(asset.id), "credit": "Brand asset"})
+                except Exception:
+                    unresolved.append(f"Slide {slide['index'] + 1}: the brand picture could not be loaded.")
+        if words:
+            patch["slides"] = words
+        if pictures:
+            patch["images"] = pictures
+    patches = [p for p in patches if len(p) > 1]
+    if d.get("refresh_theme"):
+        for draft in drafts:
+            patch = next((p for p in patches if p["id"] == str(draft.id)), None)
+            if patch is None:
+                patch = {"id": str(draft.id)}
+                patches.append(patch)
+            patch["force_theme"] = True
+    theme = renderer.theme if renderer else config.theme.name
+    for draft in drafts:
+        if needs_theme_refresh(session, draft, theme):
+            patch = next((p for p in patches if p["id"] == str(draft.id)), None)
+            if patch is None:
+                patch = {"id": str(draft.id)}
+                patches.append(patch)
+            patch["refresh_theme"] = True
     if not patches:
-        why = (d.get("reply") or "").strip() or "no change it could make"
-        return stuck(session, card, f"the revision could not fix this with words alone: {why}"
+        why = "; ".join(unresolved) or (d.get("reply") or "").strip() or "no change it could make"
+        return stuck(session, card, f"the revision could not apply the requested changes: {why}"
                      + (f" ({'; '.join(problems)})" if problems else ""), actor=MAKER)
     applied = 0
     for p in patches:
         try:
             maker.revise(session, uuid.UUID(p["id"]), caption=p.get("caption"), alt_texts=p.get("alt_texts"),
-                         slides=p.get("slides"), renderer=renderer, by=MAKER)
+                         slides=p.get("slides"), renderer=renderer, by=MAKER,
+                         refresh_theme=p.get("refresh_theme", False), images=p.get("images"),
+                         force_theme=p.get("force_theme", False))
             applied += 1
         except (maker.MakerError, queue.QueueError, LookupError) as e:
             session.rollback()
@@ -469,9 +554,11 @@ def revise(session: Session, card: Card, d: dict, *, renderer=None) -> Card:
     if not applied:
         return stuck(session, card, "the revision was refused: " + "; ".join(problems), actor=MAKER)
     text = f"Revised: {(d.get('reply') or '').strip()}"
-    if problems:
-        text += "\n\nNot applied: " + "; ".join(problems)
+    if problems or unresolved:
+        text += "\n\nNot applied: " + "; ".join(problems + unresolved)
     cards.comment(session, card, MAKER, text[:4000], commit=False)
+    if for_user or problems or unresolved:
+        return hold(session, card, actor=MAKER, note=REVISION_HOLD)
     set_column(session, card, "In review", actor=MAKER, reason="revised; the editor reads it again")
     jobs.enqueue(session, "review", card.id)
     return card

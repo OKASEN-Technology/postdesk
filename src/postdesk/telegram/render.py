@@ -11,7 +11,9 @@ images with their credit and licence, a post's slides as an album).
 
 from __future__ import annotations
 
+import hashlib
 import html
+import json
 import re
 import uuid
 from dataclasses import dataclass, field
@@ -19,7 +21,7 @@ from dataclasses import dataclass, field
 from sqlalchemy.orm import Session
 
 from postdesk import storage
-from postdesk.board import posts
+from postdesk.board import posts, transitions
 from postdesk.config import settings
 from postdesk.db.models import Card, ContentAsset
 
@@ -150,12 +152,17 @@ ACTIONS = {
     "go": "Approve",
     "rt": "Rethink",
     "hd": "Hold",
+    "bx": "Schedule Instagram + X",
+    "bt": "Choose time for Instagram + X",
+    "vw": "Open card",
     "sc": "Schedule",
     "pk": "Pick a time",
     "bd": "Back to draft",
     "rv": "To the editor",
     "bp": "Back to the partner",
     "dr": "Drop",
+    "ok": "Approve as is",
+    "im": "Change an image",
 }
 
 
@@ -168,7 +175,7 @@ def parse_data(value: str) -> tuple[str, uuid.UUID] | None:
     if action not in ACTIONS:
         return None
     try:
-        return action, uuid.UUID(hex=hexid)
+        return action, uuid.UUID(hex=hexid.split(":", 1)[0])
     except ValueError:
         return None
 
@@ -184,13 +191,16 @@ def keyboard(card: Card, rows: list[list[str | tuple[str, str]]]) -> dict:
 
 def brief_buttons(card: Card) -> dict:
     buttons = keyboard(card, [["go"], ["rt", "hd"]])
-    buttons["inline_keyboard"].insert(0, [{"text": "Preview Instagram post", "url": preview_url(card)}])
+    buttons["inline_keyboard"].insert(0, [{"text": "Preview Instagram & X", "url": preview_url(card)}])
     return buttons
 
 
-def schedule_buttons(card: Card, when: str) -> dict:
-    buttons = keyboard(card, [[("sc", f"Schedule for {when}")], ["pk"], ["rt", "hd"]])
-    buttons["inline_keyboard"].insert(1, [{"text": "Preview Instagram post", "url": preview_url(card)}])
+def schedule_buttons(card: Card, when: str, *, retry_x: bool = False) -> dict:
+    if retry_x:
+        return keyboard(card, [[("sc", f"Retry X · {when}")], [("pk", "X · choose time")], ["hd"]])
+    buttons = keyboard(card, [[("sc", f"Instagram · {when}")], [("bx", f"Instagram + X · {when}")],
+                              [("pk", "Instagram · choose time"), ("bt", "Both · choose time")], ["im"], ["rt", "hd"]])
+    buttons["inline_keyboard"].insert(1, [{"text": "Preview Instagram & X", "url": preview_url(card)}])
     return buttons
 
 
@@ -203,8 +213,15 @@ def hold_buttons(session: Session, card: Card) -> dict:
     if any(p.status == "failed" for p in rows):
         return keyboard(card, [["bd"], ["dr"]])
     if posts.drafts(session, card.id):
-        return keyboard(card, [["rv"], ["bp", "dr"]])
+        return keyboard(card, [["im"], ["rv"], ["bp", "dr"]])
     return keyboard(card, [["bp"], ["dr"]])
+
+
+def hold_version(session: Session, card: Card) -> str:
+    drafts_ = posts.drafts(session, card.id)
+    value = {"review": card.review, "reason": card.stuck_reason,
+             "drafts": [(str(p.id), str(p.updated_at)) for p in drafts_]}
+    return hashlib.sha256(json.dumps(value, sort_keys=True, default=str).encode()).hexdigest()[:12]
 
 
 # ---------------------------------------------------------------- images
@@ -316,22 +333,94 @@ def drafts(session: Session, card: Card, *, buttons: bool = True) -> list[Out]:
     rec = posts.recommended_time(session, card)
     blocks.append(f"Recommended time: <b>{esc(when(rec))}</b>. Reply to this message to comment, or /schedule "
                   "with a time.")
-    out += messages(blocks, schedule_buttons(card, when(rec)) if buttons else None)
+    retry_x = bool(posts.drafts(session, card.id)) and all(
+        p.channel == "x" for p in posts.drafts(session, card.id))
+    out += messages(blocks, schedule_buttons(card, when(rec), retry_x=retry_x) if buttons else None)
     return out
 
 
 def on_hold(session: Session, card: Card, reason: str | None, *, buttons: bool = True) -> list[Out]:
-    blocks = [f"<b>On hold: {esc(card.title)}</b>", *md_blocks(reason or card.stuck_reason or "")]
-    return messages(blocks, hold_buttons(session, card) if buttons else None)
+    drafts_ = posts.drafts(session, card.id)
+    review = card.review or {}
+    current_reason = reason or card.stuck_reason or ""
+    review_reason = str(review.get("why") or "")
+    image_updated = current_reason in (transitions.IMAGE_EDIT_HOLD, transitions.REVISION_HOLD)
+    # A later job failure can leave an older editor verdict on the card.
+    # Never present that verdict as the reason for the new hold.
+    if (not image_updated and drafts_ and review.get("column") == "On hold" and review_reason and current_reason
+            and not (current_reason == review_reason or current_reason.startswith(review_reason + ":"))):
+        blocks = [f"<b>On hold: {esc(card.title)}</b>", *md_blocks(current_reason),
+                  "The requested changes may not have been applied. The previous draft is still available."]
+        return messages(blocks, keyboard(card, [["im"], ["rt"], ["rv"], ["bp", "dr"]]) if buttons else None)
+    if not drafts_ or (review.get("column") != "On hold" and not image_updated):
+        blocks = [f"<b>On hold: {esc(card.title)}</b>", *md_blocks(reason or card.stuck_reason or "")]
+        return messages(blocks, hold_buttons(session, card) if buttons else None)
+    out: list[Out] = []
+    blocks = [f"<b>Needs your review: {esc(card.title)}</b>"]
+    if image_updated:
+        from postdesk.board import cards
+        thread = cards.thread(session, card)
+        last_comment = thread[-1] if thread else None
+        latest = (last_comment.body_md if last_comment and last_comment.author == "maker"
+                  and last_comment.body_md.startswith("Revised:") else None)
+        if latest:
+            blocks.extend(md_blocks(latest))
+        blocks.append("The draft was updated. The editor's previous notes may no longer match; "
+                      "check the current slides and alt text, or send them to the editor again.")
+    if review.get("summary") and not image_updated:
+        blocks += md_blocks(str(review["summary"]))
+    for note in ([] if image_updated else review.get("notes") or []):
+        label = str(note.get("target") or "post").replace("_", " ")
+        if note.get("slide"):
+            label += f" · slide {note['slide']}"
+        text = f"**{label}**: {note.get('problem') or ''}"
+        if note.get("fix"):
+            text += f"\nSuggested: {note['fix']}"
+        blocks.extend(md_blocks(text))
+    complete = True
+    for p in drafts_:
+        label = "Story" if p.kind == "story" else ("Carousel" if p.kind == "carousel" else "Post")
+        if not p.slides:
+            complete = False
+            blocks.append(f"{esc(label)} has no slides to review.")
+            continue
+        if p.kind == "reel":
+            complete = False
+            blocks.append("This Reel cannot be previewed in Telegram yet.")
+            continue
+        photos = []
+        for i, slide in enumerate(p.slides, 1):
+            img = image_bytes(session, slide.get("asset_id"))
+            if img:
+                photos.append((img, f"{esc(label)} · slide {i} of {len(p.slides)}"))
+            else:
+                complete = False
+                blocks.append(f"{esc(label)} slide {i} could not be loaded.")
+        for i in range(0, len(photos), 10):
+            out.append(Out(photos=photos[i:i + 10]))
+        if p.caption:
+            blocks += [f"<b>{esc(label)} caption</b>", *[esc(piece) for piece in split(p.caption)]]
+        blocks += _alt_blocks([s.get("alt_text") or "" for s in p.slides])
+    blocks.append("<i>Review the images and notes. Approving keeps this as a draft; scheduling is a separate step.</i>")
+    controls = None
+    if buttons:
+        controls = keyboard(card, [["im"], ["rv"], ["rt"], ["bp", "dr"]] if image_updated else
+                            [["im"], ["rt"], ["bp", "dr"]])
+        if complete:
+            controls["inline_keyboard"].insert(0, [{"text": ACTIONS["ok"],
+                "callback_data": f"{data('ok', card.id)}:{hold_version(session, card)}"}])
+    return out + messages(blocks, controls)
 
 
 def live(session: Session, card: Card) -> list[Out]:
     rows = [p for p in posts.for_card(session, card.id) if p.status == "published"]
-    links = "\n".join(f"{esc(p.kind)}: {esc(p.permalink or '(no permalink)')}" for p in rows)
+    links = "\n".join(f"{esc(p.channel)} {esc(p.kind)}: {esc(p.permalink or '(no permalink)')}" for p in rows)
     return messages([f"<b>Live: {esc(card.title)}</b>", links])
 
 
 def scheduled_text(session: Session, card: Card) -> str:
-    at = [p.publish_at for p in posts.for_card(session, card.id) if p.status == "approved" and p.publish_at]
-    return (f"Scheduled for <b>{esc(when(min(at)) if at else 'its time')}</b>: {esc(card.title)}. "
-            "Reply /unschedule to pull it.")
+    rows = [p for p in posts.for_card(session, card.id) if p.status == "approved" and p.publish_at]
+    lines = [f"<b>Scheduled: {esc(card.title)}</b>"]
+    lines += [f"• {esc(p.channel.title())} {esc(p.kind)} · {esc(when(p.publish_at))}" for p in rows]
+    lines.append("Reply /unschedule to pull it.")
+    return "\n".join(lines)

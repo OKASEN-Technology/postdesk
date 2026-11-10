@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { api, errorText, type Config, type Lint, type Post, type SlidePatch } from "../api";
+import { api, errorText, type BrandItem, type Config, type Lint, type Post, type SlidePatch } from "../api";
 import { fmt, fromLocalInput, insidePublisherHours, toLocalInput } from "../time";
 import { Badge, CARD, DANGER, ErrorNote, INPUT, LABEL, PRIMARY, SECONDARY } from "../ui";
 
-const MAX_CAPTION = 2200;
+const MAX_CAPTION = 280;
 const MORE_CUT = 125;
 /** The fields that read better in a box than on a line. */
 const LONG_FIELDS = new Set(["body", "text", "line", "sub", "figure_sub", "line1", "line2"]);
@@ -37,15 +37,19 @@ function SlideWords({ words, onChange }: { words: Record<string, string>; onChan
 export function CaptionChecks({ caption, config }: { caption: string; config: Config }) {
   const [lint, setLint] = useState<Lint | null>(null);
   useEffect(() => {
-    const t = setTimeout(() => api.lint(caption).then(setLint).catch(() => setLint(null)), 300);
-    return () => clearTimeout(t);
+    let cancelled = false;
+    setLint(null);
+    const t = setTimeout(() => api.lint(caption).then((result) => { if (!cancelled) setLint(result); }).catch(() => { if (!cancelled) setLint(null); }), 300);
+    return () => { cancelled = true; clearTimeout(t); };
   }, [caption]);
   return (
     <div className="mt-1 space-y-2 text-xs">
       <p className="font-mono text-[11px] text-ink-3">
-        <span className={caption.length > MAX_CAPTION ? "text-clay" : ""}>{caption.length} / {MAX_CAPTION}</span>
+        <span className={Array.from(caption).length > MAX_CAPTION ? "text-clay" : ""}>{lint?.characters ?? Array.from(caption).length} / {MAX_CAPTION} characters</span>
+        {lint && <> · <span className={lint.x_weighted_characters > MAX_CAPTION ? "text-clay" : ""}>{lint.x_weighted_characters} / {MAX_CAPTION} on X</span></>}
         {lint && <> · <span className={lint.hashtags > config.max_hashtags ? "text-sun" : ""}>{lint.hashtags} hashtag{lint.hashtags === 1 ? "" : "s"}</span></>}
       </p>
+      <p>Instagram and X share a 280 character limit, including spaces, links and hashtags.</p>
       {lint?.errors.map((e) => <p key={e} className="text-clay">{e}. Publishing would fail.</p>)}
       {lint?.warnings.map((w) => <p key={w} className="text-sun">{w}</p>)}
       {/https?:\/\/|www\./i.test(caption) && <p className="text-sun">Links are not clickable in Instagram captions.</p>}
@@ -70,7 +74,11 @@ export default function PostEditor({ config }: { config: Config }) {
   const [words, setWords] = useState<(Record<string, string> | null)[]>([]);
   const [slide, setSlide] = useState(0);
   const [publishAt, setPublishAt] = useState("");
+  const [crosspostX, setCrosspostX] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [brandImages, setBrandImages] = useState<BrandItem[] | null>(null);
+  const [imagePicker, setImagePicker] = useState(false);
+  const [imageSearch, setImageSearch] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback((p: Post) => {
@@ -102,7 +110,8 @@ export default function PostEditor({ config }: { config: Config }) {
   if (error && !post) return <ErrorNote text={error} />;
   if (!post) return <p className="text-sm text-ink-3">Loading…</p>;
 
-  const editable = post.status === "draft";
+  const editable = post.status === "draft" && post.channel !== "x";
+  const schedulable = post.status === "draft";
   const wordPatches: SlidePatch[] = words.flatMap((w, i) => {
     const was = post.slides[i]?.words;
     if (!w || !was) return [];
@@ -111,9 +120,9 @@ export default function PostEditor({ config }: { config: Config }) {
   });
   const dirty = caption !== post.caption || title !== post.title || alts.some((a, i) => a !== post.slides[i]?.alt_text)
     || wordPatches.length > 0;
-  const tall = post.kind === "story";
+  const tall = post.kind === "story" || post.kind === "reel";
   const current = post.slides[slide];
-  const missingAlt = post.kind === "story" ? 0 : alts.filter((a) => !a.trim()).length;
+  const missingAlt = post.kind === "story" || post.kind === "reel" ? 0 : alts.filter((a) => !a.trim()).length;
   const chosen = publishAt ? fromLocalInput(publishAt, tz) : null;
   const inPast = chosen !== null && chosen.getTime() < Date.now();
   const outsideHours = publishAt !== "" && !insidePublisherHours(publishAt, config.publisher_hours);
@@ -135,12 +144,26 @@ export default function PostEditor({ config }: { config: Config }) {
     title, caption: post.kind === "story" ? undefined : caption, alt_texts: alts,
     slides: wordPatches.length ? wordPatches : undefined,
   });
+  const chooseBrandImages = () => {
+    setImagePicker(true);
+    api.brandLibrary().then((result) => setBrandImages(result.items.filter((x) => x.enabled && x.type === "image")))
+      .catch((e) => setError(errorText(e)));
+  };
+  const replaceImage = (body: Record<string, string>) => {
+    if (dirty && !window.confirm("You have unsaved text changes. Changing the image will discard them. Continue?")) return;
+    run(() => api.replaceSlideImage(post.id, slide, { ...body, expected_asset_id: current.asset_id }), () => setImagePicker(false));
+  };
   const save = () => run(() => api.updatePost(post.id, edits()));
+  const rejectPost = () => {
+    if (post.channel === "x" && post.status === "approved" &&
+        !window.confirm("Cancel this scheduled X post? The Instagram post will remain scheduled.")) return;
+    run(() => api.action(post.id, "reject"), () => navigate(home));
+  };
   // Back to where the post belongs: its card on the board, else the queue.
   const home = post.card_id ? `/cards/${post.card_id}` : "/queue";
   const approve = () => run(async () => {
     if (dirty) await api.updatePost(post.id, edits());
-    return api.approve(post.id, fromLocalInput(publishAt, tz).toISOString());
+    return api.approve(post.id, fromLocalInput(publishAt, tz).toISOString(), crosspostX);
   }, () => navigate(home));
 
   return (
@@ -169,7 +192,7 @@ export default function PostEditor({ config }: { config: Config }) {
       <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,26rem)]">
         <section aria-label="Slides" className="min-w-0">
           <div className={`relative mx-auto overflow-hidden rounded-lg border border-line bg-paper-2 ${tall ? "aspect-[9/16] w-[min(100%,calc(75vh*0.5625))]" : "aspect-[4/5] w-[min(100%,calc(75vh*0.8))]"}`}>
-            {current?.url ? <img src={current.url} alt={alts[slide] ?? ""} className="h-full w-full object-contain" /> : <p className="p-4 text-sm text-ink-3">No image</p>}
+            {current?.url ? post.kind === "reel" ? <video src={current.url} controls className="h-full w-full object-contain" /> : <img src={current.url} alt={alts[slide] ?? ""} className="h-full w-full object-contain" /> : <p className="p-4 text-sm text-ink-3">No image</p>}
             {count > 1 && (
               <>
                 <button type="button" onClick={() => go(-1)} disabled={slide === 0} aria-label="Previous slide"
@@ -179,6 +202,21 @@ export default function PostEditor({ config }: { config: Config }) {
               </>
             )}
           </div>
+          {editable && current?.can_replace_image && (
+            <div className="mx-auto mt-3 max-w-lg rounded border border-line p-3">
+              <div className="flex flex-wrap gap-2"><button type="button" className={SECONDARY} disabled={busy} onClick={chooseBrandImages}>Choose brand image</button>
+                <label className={`${SECONDARY} cursor-pointer`}>Upload image<input type="file" className="sr-only" accept="image/jpeg,image/png,image/webp" disabled={busy} onChange={async (e) => {
+                  const file = e.target.files?.[0]; e.target.value = ""; if (!file) return;
+                  if (dirty && !window.confirm("You have unsaved text changes. Uploading will discard them. Continue?")) return;
+                  setBusy(true); setError(null); try { const asset = await api.upload(file, "Owner supplied"); load(await api.replaceSlideImage(post.id, slide, {asset_id: asset.id, expected_asset_id: current.asset_id})); setImagePicker(false); } catch (err) { setError(errorText(err)); } finally { setBusy(false); }
+                }} /></label></div>
+              <p className="mt-2 text-xs text-ink-2">The picture changes on this slide only. Review its alt text afterward.</p>
+              {imagePicker && <div className="mt-3"><div className="flex justify-between"><p className={LABEL}>Brand images</p><button type="button" className="text-xs underline" onClick={() => setImagePicker(false)}>Close</button></div>
+                <label className="mt-2 block text-xs text-ink-2">Search brand images<input className={INPUT} value={imageSearch} onChange={(e) => setImageSearch(e.target.value)} placeholder="Search by file name" /></label>
+                {brandImages === null ? <p className="mt-2 text-sm">Loading images…</p> : brandImages.length === 0 ? <p className="mt-2 text-sm">No enabled brand images found.</p> : <div className="mt-2 grid max-h-80 grid-cols-3 gap-2 overflow-auto">{brandImages.filter((image) => image.name.toLowerCase().includes(imageSearch.toLowerCase())).slice(0, 80).map((image) => <button type="button" key={image.key} disabled={busy} onClick={() => replaceImage({brand_key: image.key})} className="overflow-hidden rounded border border-line text-left hover:border-ink"><img src={image.url} alt="" loading="lazy" className="aspect-square w-full object-cover" /><span className="block truncate p-1 text-xs">{image.name}</span></button>)}</div>}<p className="mt-2 text-xs text-ink-2">Showing up to 80 images. Search to find more.</p>
+              </div>}
+            </div>
+          )}
           <p className="mt-2 text-center font-mono text-xs text-ink-2">
             Slide {slide + 1} / {count}{count > 1 && " · ← → to move"}
             {missingAlt > 0 && <span className="text-clay"> · {missingAlt} without alt text</span>}
@@ -221,7 +259,7 @@ export default function PostEditor({ config }: { config: Config }) {
             </section>
           )}
 
-          <section className={CARD}>
+          {post.kind !== "reel" && <section className={CARD}>
             <p className={LABEL}>Alt text · slide {slide + 1}</p>
             {editable ? (
               <textarea value={alts[slide] ?? ""} rows={3} placeholder="Describe what is on this slide" className={INPUT}
@@ -231,7 +269,7 @@ export default function PostEditor({ config }: { config: Config }) {
             )}
             {editable && post.kind !== "story" && !alts[slide]?.trim() && <p className="mt-1 text-xs text-clay">This slide has no alt text.</p>}
             {post.kind === "story" && <p className="mt-1 text-xs text-ink-3">Instagram does not take alt text on Stories; it is kept for your records.</p>}
-          </section>
+          </section>}
 
           {post.kind !== "story" && (
             <section className={CARD}>
@@ -249,8 +287,9 @@ export default function PostEditor({ config }: { config: Config }) {
             <p className={LABEL}>Schedule</p>
             <div className="mt-2 space-y-3">
               <ErrorNote text={error} />
-              {editable && (
+              {schedulable && (
                 <>
+                  {post.channel === "x" && <p className="text-xs text-ink-2">This copy keeps the same content as its Instagram post.</p>}
                   <label className="block text-xs text-ink-2">
                     Publish at ({tz})
                     {post.publish_at && publishAt === toLocalInput(post.publish_at, tz) && " · recommended"}
@@ -264,19 +303,24 @@ export default function PostEditor({ config }: { config: Config }) {
                       so this goes out at {config.publisher_hours[0]} instead.
                     </p>
                   )}
+                  {post.channel === "instagram" && post.kind !== "story" && post.kind !== "reel" && <div className="rounded border border-line p-3">
+                    <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={crosspostX} onChange={(e) => setCrosspostX(e.target.checked)} className="mt-1" /> Also post to X</label>
+                    <p className="mt-1 text-xs text-ink-2">Creates a separate scheduled X post with the same caption and images. Cancelling the X post does not cancel Instagram. X allows up to four images. Image alt text is not sent to X. <Link to="/settings" className="text-moss underline">Connect X</Link></p>
+                  </div>}
                   <div className="flex flex-wrap gap-2">
                     <button type="button" disabled={busy || !publishAt} onClick={approve} className={PRIMARY}>Approve &amp; schedule</button>
                     {dirty && <button type="button" disabled={busy} onClick={save} className={SECONDARY}>Save edits</button>}
-                    <button type="button" disabled={busy} onClick={() => run(() => api.action(post.id, "reject"), () => navigate(home))} className={DANGER}>Reject</button>
+                    <button type="button" disabled={busy} onClick={rejectPost} className={DANGER}>Reject</button>
                   </div>
                 </>
               )}
               {post.status === "approved" && (
                 <>
                   <p className="text-sm text-ink-2">Goes out {fmt(post.publish_at, tz)} · approved by {post.approved_by}. An approved post cannot be edited.</p>
+                  {post.channel === "x" && <p className="text-sm text-ink-2">This is the separately scheduled X copy. Cancelling it stops the X post only.</p>}
                   <div className="flex flex-wrap gap-2">
                     <button type="button" disabled={busy} onClick={() => run(() => api.action(post.id, "unapprove"))} className={SECONDARY}>Unapprove to edit</button>
-                    <button type="button" disabled={busy} onClick={() => run(() => api.action(post.id, "reject"), () => navigate(home))} className={DANGER}>Reject</button>
+                    <button type="button" disabled={busy} onClick={rejectPost} className={DANGER}>{post.channel === "x" ? "Cancel X post" : "Reject"}</button>
                   </div>
                 </>
               )}
@@ -284,7 +328,7 @@ export default function PostEditor({ config }: { config: Config }) {
                 <>
                   <p className="text-sm text-ink-2">
                     Publishing started {fmt(post.updated_at, tz)}. If that is more than an hour ago, check the account on
-                    Instagram first: send it back to draft only if it never went out, or you will post it twice.
+                    {post.channel === "x" ? "X" : "Instagram"} first: send it back to draft only if it never went out, or you will post it twice.
                   </p>
                   <button type="button" disabled={busy} onClick={() => run(() => api.action(post.id, "back-to-draft"))} className={SECONDARY}>Back to draft</button>
                 </>
@@ -292,10 +336,19 @@ export default function PostEditor({ config }: { config: Config }) {
               {post.status === "failed" && (
                 <div className="flex flex-wrap gap-2">
                   <button type="button" disabled={busy} onClick={() => run(() => api.action(post.id, "back-to-draft"))} className={SECONDARY}>Back to draft</button>
-                  <button type="button" disabled={busy} onClick={() => run(() => api.action(post.id, "reject"), () => navigate(home))} className={DANGER}>Reject</button>
+                  <button type="button" disabled={busy} onClick={rejectPost} className={DANGER}>Reject</button>
                 </div>
               )}
-              {(post.status === "published" || post.status === "rejected") && <p className="text-sm text-ink-2">Nothing left to schedule.</p>}
+              {post.status === "published" && post.channel === "instagram" && (post.kind === "image" || post.kind === "carousel") && (
+                <div className="space-y-2">
+                  <p className="text-sm text-ink-2">Schedule the same caption and images on X. Instagram will not be posted again.</p>
+                  <button type="button" disabled={busy} className={SECONDARY} onClick={() => {
+                    if (!window.confirm("Schedule this published Instagram post on X?")) return;
+                    run(() => api.crosspostPublishedX(post.id));
+                  }}>Schedule on X</button>
+                </div>
+              )}
+              {post.status === "rejected" && <p className="text-sm text-ink-2">Nothing left to schedule.</p>}
             </div>
           </section>
 
@@ -308,7 +361,7 @@ export default function PostEditor({ config }: { config: Config }) {
               {post.published_at && (
                 <li>
                   Published {fmt(post.published_at, tz)}
-                  {post.permalink && <> · <a href={post.permalink} target="_blank" rel="noreferrer" className="text-moss hover:underline">View on Instagram</a></>}
+                  {post.permalink && <> · <a href={post.permalink} target="_blank" rel="noreferrer" className="text-moss hover:underline">View on {post.channel === "x" ? "X" : "Instagram"}</a></>}
                 </li>
               )}
               {post.status === "rejected" && <li>Rejected {fmt(post.updated_at, tz)}</li>}

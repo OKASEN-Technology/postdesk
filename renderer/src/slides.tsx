@@ -659,9 +659,9 @@ export function layouts(theme: Theme) {
           <Kicker text={s.kicker} color={C.accentLight} />
           <Words text={s.headline} em={s.headline_em} size={108} color={C.paper} emColor={C.paper} tracking={-3} />
           <div style={{ display: "flex", maxWidth: 840, fontFamily: SANS, fontSize: 34, lineHeight: 1.35, color: C.mutedLight }}>{s.body}</div>
-          <div style={{ display: "flex", alignSelf: "flex-start", alignItems: "center", gap: 14, padding: "20px 30px", border: `2px solid ${C.paper}`, fontFamily: MONO, fontSize: 26, fontWeight: 600, letterSpacing: 2, textTransform: "uppercase" }}>
+          {S.linkInBio ? <div style={{ display: "flex", alignSelf: "flex-start", alignItems: "center", gap: 14, padding: "20px 30px", border: `2px solid ${C.paper}`, fontFamily: MONO, fontSize: 26, fontWeight: 600, letterSpacing: 2, textTransform: "uppercase" }}>
             {S.linkInBio} <Arrow color={C.paper} />
-          </div>
+          </div> : null}
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 36, borderTop: `1px solid ${C.rule}`, paddingTop: 36 }}>
           <div style={{ display: "flex", flexWrap: "wrap", fontFamily: SANS, fontSize: 28, lineHeight: 1.4, color: C.mutedLight }}>

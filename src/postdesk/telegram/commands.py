@@ -16,7 +16,9 @@ else the bot asks you to reply to the card's message.
 
 from __future__ import annotations
 
+import hashlib
 import re
+import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
@@ -24,7 +26,7 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from postdesk import control, queue
+from postdesk import brand_library, control, instagram, queue, storage
 from postdesk.board import actions, cards, posts, transitions
 from postdesk.board.cards import BoardError
 from postdesk.config import config
@@ -42,9 +44,11 @@ caption, to offer it a picture.
 /board: every open card by column
 /queue: what is scheduled
 /status: the account, the renderer, this month's spend
+/review: show the held post and its review
 /go: approve the brief
 /rethink &lt;note&gt;: back to the partner (or the maker) with a note
-/schedule [time]: schedule it: the recommended time, or <i>tomorrow 18:00</i>, <i>fri 7:30</i>
+/schedule [time]: schedule on Instagram
+/schedule_both [time]: schedule the same post on Instagram and X
 /unschedule: pull a scheduled post back
 /hold [why], /drop: hold it, or take it off the board
 /pause, /resume: stop or start the scout and the agents"""
@@ -60,6 +64,7 @@ FITS = {
     "hold": ("Planned", "Brief ready", "Approved", "Making", "In review", "Awaiting approval", "Scheduled"),
     "drop": ("Inbox", "Planned", "Brief ready", "Awaiting approval", "On hold"),
     "comment": transitions.PARTNER_COLUMNS,
+    "review": ("On hold",),
 }
 WHAT = {
     "go": "at Brief ready",
@@ -69,6 +74,7 @@ WHAT = {
     "hold": "in progress",
     "drop": "open",
     "comment": "with the partner",
+    "review": "on hold",
 }
 
 
@@ -96,6 +102,7 @@ def send(session: Session, bot: Bot, chat_id: str, outs: list[Out], *, card: Car
     """Send `outs` in order; each message about a card is remembered, so a
     reply to it lands on that card. Returns the message ids."""
     ids: list[int] = []
+    photo_failed = False
     for o in outs:
         msgs: list[dict] = []
         if o.photos:
@@ -106,16 +113,23 @@ def send(session: Session, bot: Bot, chat_id: str, outs: list[Out], *, card: Car
                 else:
                     msgs = bot.send_media_group(chat_id, o.photos)
             except TelegramError as e:  # a picture Telegram will not take is not worth losing the text for
+                photo_failed = True
                 msgs = [bot.send_message(chat_id, f"(a picture could not be sent: {esc(str(e))[:200]})")]
         if o.text:
+            buttons = o.buttons
+            if photo_failed and buttons:
+                rows = [[b for b in row if not b.get("callback_data", "").startswith("ok:")]
+                        for row in buttons.get("inline_keyboard", [])]
+                buttons = {**buttons, "inline_keyboard": rows}
+                buttons["inline_keyboard"] = [row for row in buttons["inline_keyboard"] if row]
             try:
-                msgs.append(bot.send_message(chat_id, o.text, reply_markup=o.buttons, reply_to=reply_to))
+                msgs.append(bot.send_message(chat_id, o.text, reply_markup=buttons, reply_to=reply_to))
             except TelegramError as e:
                 if "parse" not in str(e).lower():
                     raise
                 # The HTML did not parse: the same words, plain.
                 msgs.append(bot.send_message(chat_id, esc(render.visible(o.text))[:render.LIMIT],
-                                             reply_markup=o.buttons, reply_to=reply_to))
+                                             reply_markup=buttons, reply_to=reply_to))
         for m in msgs:
             if card is not None and m and m.get("message_id") is not None:
                 remember(session, chat_id, m["message_id"], card, o.purpose)
@@ -221,7 +235,7 @@ def handle(session: Session, bot: Bot, update: dict, deps: Deps | None = None) -
 def message(session: Session, bot: Bot, chat_id: str, msg: dict, actor: str, deps: Deps) -> None:
     try:
         if msg.get("photo"):
-            photo(session, bot, chat_id, msg, actor)
+            photo(session, bot, chat_id, msg, actor, deps)
             return
         text = msg.get("text") or ""
         cmd = command_of(text)
@@ -240,18 +254,45 @@ def free_text(session: Session, bot: Bot, chat_id: str, msg: dict, text: str, ac
     card, purpose = target(session, chat_id, msg, "comment")
     if purpose == "rethink":
         do_rethink(session, bot, chat_id, card, text, actor)
-    elif purpose == "pick_time":
-        do_schedule(session, bot, chat_id, card, text, actor)
+    elif purpose in ("pick_time", "pick_both_time"):
+        do_schedule(session, bot, chat_id, card, text, actor, both=purpose == "pick_both_time")
+    elif purpose == "edit_shared_caption":
+        from twitter_text import parse_tweet
+        if card.column != "Awaiting approval":
+            raise Refused("This card is no longer awaiting approval. Open it from /board.")
+        parsed = parse_tweet(text)
+        if not parsed.valid:
+            raise Refused(f"That caption counts as {parsed.weightedLength} characters on X; maximum 280. "
+                          "Reply to the caption request again.")
+        feed = [p for p in posts.drafts(session, card.id)
+                if p.channel == "instagram" and p.kind in ("image", "carousel")]
+        if len(feed) != 1:
+            raise Refused("This card no longer has one editable Instagram feed draft. Open it from /board.")
+        queue.update_post(session, feed[0].id, caption=text)
+        transitions.send_to_review(session, card, actor=actor,
+                                   note="Shared Instagram and X caption edited in Telegram; review the updated draft.")
+        say(session, bot, chat_id, f"Caption updated on <b>{esc(card.title)}</b> and sent to the editor. "
+            "Nothing is scheduled; choose both platforms after review.", card=card)
     else:
         asked = actions.comment(session, card, text)
         say(session, bot, chat_id, f"Noted on <b>{esc(card.title)}</b>."
             + (" The partner is answering." if asked else ""), card=card)
 
 
-def photo(session: Session, bot: Bot, chat_id: str, msg: dict, actor: str) -> None:
+def photo(session: Session, bot: Bot, chat_id: str, msg: dict, actor: str, deps: Deps | None = None) -> None:
     if not msg.get("reply_to_message"):
         raise Refused("Send the photo as a reply to the card's message, so I know which post it is for.")
-    card, _ = target(session, chat_id, msg, "comment")
+    card, purpose = target(session, chat_id, msg, "comment")
+    if purpose.startswith("image:"):
+        _, post_id, index, version = purpose.split(":")
+        post, slide = image_target(session, card, post_id, index, version)
+        biggest = max(msg["photo"], key=lambda p: p.get("file_size") or p.get("width", 0))
+        if biggest.get("file_size", 0) > storage.MAX_IMAGE_BYTES:
+            raise Refused("That image is too large. Send a photo under 10 MB.")
+        say(session, bot, chat_id, "Updating the slide with your photo. This can take a little while.", card=card)
+        replace_image(session, bot, chat_id, card, post, slide, bot.get_file(biggest["file_id"]), actor,
+                      "Telegram upload", deps_renderer=deps.renderer if deps else None)
+        return
     note = (msg.get("caption") or "").strip()
     if not note:
         raise Refused("Say where the photo is from in its caption (\"Photo: Jo Baker, mine to use\"), so it can be "
@@ -265,6 +306,152 @@ def photo(session: Session, bot: Bot, chat_id: str, msg: dict, actor: str) -> No
            "It is on the card; send it back to the partner to use it."), card=card)
 
 
+def image_version(slide: dict) -> str:
+    return hashlib.sha256(str(slide.get("asset_id") or "").encode()).hexdigest()[:8]
+
+
+def image_field(slide: dict) -> str | None:
+    from postdesk.maker.render import schema
+    spec = slide.get("spec") or {}
+    fields = schema()["$defs"].get(spec.get("type"), {}).get("properties", {})
+    return next((field for field in ("image", "background") if field in fields), None)
+
+
+def image_target(session: Session, card: Card, post_id: str, index: str, version: str):
+    try:
+        post = session.get(SocialPost, uuid.UUID(hex=post_id))
+        i = int(index)
+    except (ValueError, TypeError):
+        raise Refused("That image choice is no longer valid. Open the card and choose again.") from None
+    if (card.column not in ("On hold", "Awaiting approval") or post is None or post.card_id != card.id
+            or post.status != "draft" or post.channel != "instagram" or not 0 <= i < len(post.slides)
+            or image_version(post.slides[i]) != version or not image_field(post.slides[i])):
+        raise Refused("That slide changed or is no longer a draft. Open the card and choose again.")
+    return post, i
+
+
+def choose_slide(session: Session, bot: Bot, chat_id: str, card: Card) -> None:
+    if card.column not in ("On hold", "Awaiting approval"):
+        raise Refused("Open a held post or draft awaiting approval to change its image.")
+    rows = []
+    for post in posts.drafts(session, card.id):
+        if post.channel != "instagram":
+            continue
+        for i, slide in enumerate(post.slides):
+            if image_field(slide):
+                label = "Story" if post.kind == "story" else "Post"
+                rows.append([{"text": f"{label} · slide {i + 1}",
+                              "callback_data": f"is:{post.id.hex}:{i}:{image_version(slide)}"}])
+    if not rows:
+        raise Refused("These drafts don't have a slide layout that supports an image.")
+    say(session, bot, chat_id, "<b>Change an image</b>\nChoose the slide or Story to update.", card=card,
+        buttons={"inline_keyboard": rows})
+
+
+def library_choices(session: Session, card: Card) -> list[dict]:
+    items = brand_library.available(session)
+    selected = brand_library.select_for_card(items, f"{card.title} {card.body_md or ''}",
+                                             limit=brand_library.MAX_OBJECTS)
+    keys = {"brand-" + hashlib.sha256(x["key"].encode()).hexdigest()[:16]: x for x in items
+            if x.get("enabled") and x.get("type") == "image"}
+    return [keys[x["key"]] for x in selected if x["key"] in keys]
+
+
+def brand_image_bytes(session: Session, item: dict) -> bytes:
+    if not 0 < item["size"] <= storage.MAX_IMAGE_BYTES:
+        raise Refused("That image is empty or exceeds 10 MB. Choose another image.")
+    try:
+        connection = brand_library.read(session)
+        body = brand_library._connection(connection).get_object(Bucket=connection["bucket"], Key=item["key"])["Body"]
+        try:
+            return body.read(storage.MAX_IMAGE_BYTES + 1)
+        finally:
+            body.close()
+    except Exception as e:
+        raise Refused("I couldn't load that brand image. Please try again or upload a photo.") from e
+
+
+def image_choices(session: Session, bot: Bot, chat_id: str, card: Card, post: SocialPost, i: int, page: int) -> None:
+    library_error = False
+    try:
+        choices = library_choices(session, card)
+    except ValueError:
+        choices, library_error = [], True
+    version = image_version(post.slides[i])
+    prefix = f"{post.id.hex}:{i}:{version}"
+    page = max(0, page)
+    page_items = choices[page * 4:(page + 1) * 4]
+    say(session, bot, chat_id, f"<b>{'Story' if post.kind == 'story' else 'Post'} · slide {i + 1}</b>\n"
+        + ("Brand images are unavailable right now. You can still upload a photo." if library_error else
+           "Tap an image below, or upload your own." if page_items else
+           "No more brand images found. You can upload your own."), card=card)
+    shown = 0
+    for item in page_items:
+        key = hashlib.sha256(item["key"].encode()).hexdigest()[:8]
+        try:
+            data = brand_image_bytes(session, item)
+            if len(data) > storage.MAX_IMAGE_BYTES:
+                continue
+            jpeg, _ = instagram.to_jpeg_bytes(data)
+            msg = bot.send_photo(chat_id, jpeg, caption=esc(item["name"][:200]),
+                                 reply_markup={"inline_keyboard": [[{"text": "Use this image",
+                                     "callback_data": f"ic:{prefix}:{key}"}]]})
+            remember(session, chat_id, msg["message_id"], card)
+            session.commit()
+            shown += 1
+        except (TelegramError, Refused, OSError, ValueError):
+            continue
+    rows = [[{"text": "Upload a photo", "callback_data": f"iu:{prefix}"}]]
+    nav = []
+    if page:
+        nav.append({"text": "Previous", "callback_data": f"in:{prefix}:{page - 1}"})
+    if (page + 1) * 4 < len(choices):
+        nav.append({"text": "More images", "callback_data": f"in:{prefix}:{page + 1}"})
+    if nav:
+        rows.append(nav)
+    rows.append([{"text": "Choose another slide", "callback_data": render.data("im", card.id)}])
+    prompt = "Choose an option:"
+    if page_items and not shown:
+        prompt = "These images couldn't be previewed in Telegram. Try more images or upload a photo."
+    say(session, bot, chat_id, prompt, card=card, buttons={"inline_keyboard": rows})
+
+
+def replace_image(session: Session, bot: Bot, chat_id: str, card: Card, post: SocialPost, i: int, data: bytes,
+                  actor: str, source: str, deps_renderer=None) -> None:
+    from postdesk.maker import render as renderer_module
+    from postdesk.maker.run import provenance
+    if not data or len(data) > storage.MAX_IMAGE_BYTES:
+        raise Refused("That image is empty or exceeds 10 MB. Choose another image.")
+    version = image_version(post.slides[i])
+    try:
+        jpeg, _ = instagram.to_jpeg_bytes(data)
+    except (OSError, ValueError) as e:
+        raise Refused("That file could not be opened as an image. Choose another image.") from e
+    try:
+        asset = storage.store_asset(session, data=jpeg, filename="telegram-image.jpg", content_type="image/jpeg",
+                                    uploaded_by=actor, provenance={"source": source, "generated": False})
+    except storage.AssetRejected as e:
+        raise Refused("That image could not be stored. Choose a smaller image and try again.") from e
+    spec = dict(post.slides[i]["spec"])
+    spec[image_field(post.slides[i])] = {"asset_id": str(asset.id), "url": storage.asset_url(asset.id),
+                                        "credit": "Brand asset" if source == "Brand library" else "Owner supplied"}
+    renderer = deps_renderer or renderer_module.Renderer()
+    try:
+        image = renderer.render(spec, session=session)
+    except renderer_module.RenderError as e:
+        raise Refused("I couldn't render the updated slide. The previous draft is unchanged; please try again.") from e
+    rendered = storage.store_asset(session, data=image, filename="telegram-revised-slide.jpg",
+                                   content_type="image/jpeg", uploaded_by=actor,
+                                   provenance=provenance(spec, "telegram image change", renderer.theme))
+    session.refresh(card)
+    session.refresh(post)
+    image_target(session, card, post.id.hex, str(i), version)
+    queue.update_post(session, post.id, rendered={i: (str(rendered.id), spec)})
+    cards.comment(session, card, "user", f"Image changed on slide {i + 1}; review the image and update alt text.")
+    transitions.hold(session, card, actor=actor, note=transitions.IMAGE_EDIT_HOLD)
+    send(session, bot, chat_id, render.on_hold(session, card, card.stuck_reason), card=card)
+
+
 # ---------------------------------------------------------------- commands
 
 
@@ -276,11 +463,17 @@ def command(session: Session, bot: Bot, chat_id: str, msg: dict, name: str, args
     elif name == "new":
         new(session, bot, chat_id, args, actor, deps)
     elif name == "board":
-        bot.send_message(chat_id, board_text(session))
+        open_ = cards.open_cards(session)
+        buttons = {"inline_keyboard": [[{"text": f"{c.column}: {c.title}"[:60],
+                                          "callback_data": render.data("vw", c.id)}] for c in open_[:30]]}
+        bot.send_message(chat_id, board_text(session), reply_markup=buttons if open_ else None)
     elif name == "queue":
         bot.send_message(chat_id, queue_text(session, now=deps.now))
     elif name == "status":
         bot.send_message(chat_id, status_text(session, deps))
+    elif name == "review":
+        card, _ = target(session, chat_id, msg, "review")
+        send(session, bot, chat_id, render.on_hold(session, card, card.stuck_reason), card=card)
     elif name == "pause":
         control.pause(session, by=actor)
         bot.send_message(chat_id, "Paused: the scout and the agents stop after what they are doing now. What is "
@@ -300,9 +493,9 @@ def command(session: Session, bot: Bot, chat_id: str, msg: dict, name: str, args
                 card, "rethink")
             return
         do_rethink(session, bot, chat_id, card, args, actor)
-    elif name == "schedule":
+    elif name in ("schedule", "schedule_both"):
         card, _ = target(session, chat_id, msg, "schedule")
-        do_schedule(session, bot, chat_id, card, args, actor)
+        do_schedule(session, bot, chat_id, card, args, actor, both=name == "schedule_both")
     elif name == "unschedule":
         card, _ = target(session, chat_id, msg, "unschedule")
         transitions.unschedule(session, card, actor=actor)
@@ -356,16 +549,40 @@ def do_rethink(session: Session, bot: Bot, chat_id: str, card: Card, note: str, 
     say(session, bot, chat_id, f"Back to {who} with your note: <b>{esc(card.title)}</b>.", card=card)
 
 
-def do_schedule(session: Session, bot: Bot, chat_id: str, card: Card, when_text: str, actor: str) -> None:
+def do_schedule(session: Session, bot: Bot, chat_id: str, card: Card, when_text: str, actor: str,
+                *, both: bool = False) -> None:
     when = posts.parse_when(when_text or "")
-    transitions.schedule(session, card, actor=actor, when=when)
+    if both and card.column == "Awaiting approval":
+        from twitter_text import parse_tweet
+        feed = [p for p in posts.drafts(session, card.id)
+                if p.channel == "instagram" and p.kind in ("image", "carousel")]
+        if len(feed) == 1:
+            parsed = parse_tweet(feed[0].caption)
+            if not parsed.valid and feed[0].caption:
+                ask(session, bot, chat_id, f"Nothing was scheduled. This caption counts as {parsed.weightedLength} "
+                    "characters on X; the limit is 280. Reply with a replacement caption for both platforms. "
+                    "It will go back to the editor for review before you schedule it.", card, "edit_shared_caption")
+                return
+    transitions.schedule(session, card, actor=actor, when=when, crosspost_x=both)
     say(session, bot, chat_id, render.scheduled_text(session, card), card=card)
 
 
 # ---------------------------------------------------------------- buttons
 
 
+def acknowledge(bot: Bot, callback_id: str, deps: Deps) -> None:
+    """Stop Telegram's spinner before doing work; an expired callback must not discard the action."""
+    try:
+        bot.answer_callback(callback_id)
+    except TelegramError as e:
+        deps.log(f"telegram: could not acknowledge button: {e}")
+
+
 def button(session: Session, bot: Bot, chat_id: str, cb: dict, actor: str, deps: Deps) -> None:
+    raw = cb.get("data") or ""
+    if raw.startswith(("is:", "ic:", "in:", "iu:")):
+        image_button(session, bot, chat_id, cb, actor, deps)
+        return
     parsed = render.parse_data(cb.get("data") or "")
     pressed = (cb.get("message") or {}).get("message_id")
     if parsed is None:
@@ -376,20 +593,46 @@ def button(session: Session, bot: Bot, chat_id: str, cb: dict, actor: str, deps:
     if card is None or card.closed_at is not None:
         bot.answer_callback(cb["id"], "That card is closed.")
         return
+    acknowledge(bot, cb["id"], deps)
     try:
-        if action == "go":
+        if action == "vw":
+            if card.column == "Brief ready":
+                send(session, bot, chat_id, render.brief(session, card), card=card)
+            elif card.column == "Awaiting approval":
+                send(session, bot, chat_id, render.drafts(session, card), card=card)
+            elif card.column == "On hold":
+                send(session, bot, chat_id, render.on_hold(session, card, card.stuck_reason), card=card)
+            elif card.column == "Scheduled":
+                say(session, bot, chat_id, render.scheduled_text(session, card), card=card)
+            else:
+                say(session, bot, chat_id, f"<b>{esc(card.title)}</b> · {esc(card.column)}. "
+                    "Reply to this message with a note, or use /help for actions.", card=card)
+        elif action == "go":
             do_approve(session, bot, chat_id, card, actor)
+        elif action == "im":
+            choose_slide(session, bot, chat_id, card)
+        elif action == "ok":
+            version = (cb.get("data") or "").split(":")[-1]
+            if version != render.hold_version(session, card):
+                raise BoardError("This review is out of date. Send /review to see the current draft.")
+            transitions.accept_review_hold(session, card, actor=actor)
+            send(session, bot, chat_id, render.drafts(session, card), card=card)
         elif action == "sc":
             do_schedule(session, bot, chat_id, card, "", actor)
-        elif action == "pk":
-            ask(session, bot, chat_id, f"When should <b>{esc(card.title)}</b> go out? Reply with a time: "
-                "<i>tomorrow 18:00</i>, <i>fri 7:30</i>, or 2031-03-07T18:00.", card, "pick_time")
-            bot.answer_callback(cb["id"])
+        elif action == "bx":
+            do_schedule(session, bot, chat_id, card, "", actor, both=True)
+        elif action in ("pk", "bt"):
+            drafts = posts.drafts(session, card.id)
+            retry_x = bool(drafts) and all(p.channel == "x" for p in drafts)
+            platforms = "Instagram and X" if action == "bt" else ("X" if retry_x else "Instagram")
+            ask(session, bot, chat_id, f"When should <b>{esc(card.title)}</b> go out on {platforms}? "
+                "Reply with a time: "
+                "<i>tomorrow 18:00</i>, <i>fri 7:30</i>, or 2031-03-07T18:00.", card,
+                "pick_both_time" if action == "bt" else "pick_time")
             return
         elif action == "rt":
             ask(session, bot, chat_id, f"What should change on <b>{esc(card.title)}</b>? Reply to this message.",
                 card, "rethink")
-            bot.answer_callback(cb["id"])
             return
         elif action == "hd":
             if card.column == "Scheduled":
@@ -401,7 +644,8 @@ def button(session: Session, bot: Bot, chat_id: str, cb: dict, actor: str, deps:
             transitions.retry(session, card, actor=actor)
             say(session, bot, chat_id, f"Back to draft: <b>{esc(card.title)}</b>. Check the account first, then "
                 "schedule it again.", card=card,
-                buttons=render.schedule_buttons(card, render.when(posts.recommended_time(session, card))))
+                buttons=render.schedule_buttons(card, render.when(posts.recommended_time(session, card)),
+                                                retry_x=all(p.channel == "x" for p in posts.drafts(session, card.id))))
         elif action == "rv":
             transitions.send_to_review(session, card, actor=actor, note="sent to the editor from Telegram")
             say(session, bot, chat_id, f"Sent to the editor: <b>{esc(card.title)}</b>.", card=card)
@@ -411,17 +655,60 @@ def button(session: Session, bot: Bot, chat_id: str, cb: dict, actor: str, deps:
         elif action == "dr":
             transitions.drop(session, card, actor=actor, note="dropped from Telegram")
             bot.send_message(chat_id, f"Dropped <b>{esc(card.title)}</b>.")
-    except (BoardError, queue.QueueError) as e:
+    except (Refused, BoardError, queue.QueueError, ValueError) as e:
         session.rollback()
-        bot.answer_callback(cb["id"], str(e))
         bot.send_message(chat_id, f"Not done: {esc(str(e))}", reply_to=pressed)
         return
-    bot.answer_callback(cb["id"], "Done.")
     if pressed:
         try:
             bot.clear_buttons(chat_id, pressed)
         except TelegramError:
             pass  # an old message whose buttons can no longer be edited
+
+
+def image_button(session: Session, bot: Bot, chat_id: str, cb: dict, actor: str, deps: Deps) -> None:
+    pressed = (cb.get("message") or {}).get("message_id")
+    acknowledge(bot, cb["id"], deps)
+    try:
+        mapped = mapping(session, chat_id, pressed) if pressed else None
+        card = session.get(Card, mapped.card_id) if mapped and mapped.card_id else None
+        if card is None or card.closed_at is not None:
+            raise Refused("That card is no longer available. Open it from /board.")
+        parts = (cb.get("data") or "").split(":")
+        if len(parts) not in (4, 5):
+            raise Refused("That image choice is no longer valid. Open the card and choose again.")
+        action, post_id, index, version = parts[:4]
+        post, i = image_target(session, card, post_id, index, version)
+        if action == "is" and len(parts) == 4:
+            say(session, bot, chat_id, "Finding brand images. This can take a little while.", card=card)
+            image_choices(session, bot, chat_id, card, post, i, 0)
+        elif action == "in" and len(parts) == 5:
+            say(session, bot, chat_id, "Finding more brand images. This can take a little while.", card=card)
+            image_choices(session, bot, chat_id, card, post, i, int(parts[4]))
+        elif action == "iu" and len(parts) == 4:
+            ask(session, bot, chat_id, "Reply to this message with the photo you want to use. "
+                "Only send an image you have permission to use.", card, f"image:{post.id.hex}:{i}:{version}")
+        elif action == "ic" and len(parts) == 5:
+            say(session, bot, chat_id, "Updating the slide with your selected image. This can take a little while.",
+                card=card)
+            candidates = [x for x in library_choices(session, card)
+                          if hashlib.sha256(x["key"].encode()).hexdigest()[:8] == parts[4]]
+            if len(candidates) != 1:
+                raise Refused("That brand image is no longer available. Choose another.")
+            chosen = candidates[0]
+            data = brand_image_bytes(session, chosen)
+            replace_image(session, bot, chat_id, card, post, i, data, actor, "Brand library", deps.renderer)
+        else:
+            raise Refused("That image choice is no longer valid. Open the card and choose again.")
+    except (Refused, BoardError, queue.QueueError, ValueError, storage.AssetRejected) as e:
+        session.rollback()
+        bot.send_message(chat_id, f"Not done: {esc(str(e))}", reply_to=pressed)
+        return
+    except Exception as e:
+        session.rollback()
+        deps.log(f"telegram: image request failed: {type(e).__name__}: {e}")
+        bot.send_message(chat_id, "I couldn't finish the image request. Check /review before trying again.",
+                         reply_to=pressed)
 
 
 # ---------------------------------------------------------------- what is going on
@@ -449,8 +736,11 @@ def queue_text(session: Session, *, now: datetime | None = None) -> str:
         return "Nothing is scheduled. Cards ready to schedule are on /board."
     lines = ["<b>Scheduled</b>"]
     for p in rows[:30]:
-        lines.append(f"• {esc(render.when(p.publish_at))}: {esc(p.kind)}, {esc(p.title)}"
-                     + (" (publishing now)" if p.status == "publishing" else ""))
+        state = ""
+        if p.status == "publishing":
+            state = " (status unconfirmed; check the platform before retrying)" if p.error else " (publishing now)"
+        lines.append(f"• {esc(render.when(p.publish_at))}: {esc(p.channel.title())} {esc(p.kind)}, {esc(p.title)}"
+                     + state)
     return "\n".join(lines)
 
 

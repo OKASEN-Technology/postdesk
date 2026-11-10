@@ -17,6 +17,7 @@ class Slide(BaseModel):
     # (maker.SLIDE_COPY). Both None for an uploaded slide.
     spec: dict | None = None
     words: dict | None = None
+    can_replace_image: bool = False
 
 
 class SlidePatch(BaseModel):
@@ -89,6 +90,7 @@ class PostUpdate(BaseModel):
 
 
 class PostApprove(BaseModel):
+    crosspost_x: bool = False
     publish_at: datetime
     approved_by: str = "admin"
 
@@ -97,6 +99,9 @@ class CaptionLint(BaseModel):
     errors: list[str]
     warnings: list[str]
     hashtags: int
+    characters: int
+    x_weighted_characters: int
+    max_characters: int
 
 
 class AssetOut(BaseModel):

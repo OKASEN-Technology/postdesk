@@ -96,6 +96,66 @@ def put_settings(body: dict, session: Session = Depends(get_session)) -> dict:
     return get_settings(session)
 
 
+@router.post("/settings/brand-assets/test")
+def test_brand_assets(body: dict) -> dict:
+    from postdesk import brand_assets
+    from postdesk.config import Voice
+
+    try:
+        url = Voice(brand_assets_url=body.get("url")).brand_assets_url
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    if not url:
+        raise HTTPException(status_code=400, detail="Enter a public brand assets URL first")
+    assets, error = brand_assets.load(config_url=url)
+    if error:
+        raise HTTPException(status_code=400, detail=error)
+    return {"count": len(assets)}
+
+
+@router.get("/settings/brand-library")
+def brand_library_status(session: Session = Depends(get_session)) -> dict:
+    from postdesk import brand_library
+
+    try:
+        connection = brand_library.read(session)
+        if not connection:
+            return {"configured": False, "items": []}
+        items = brand_library.available(session)
+        return {"configured": True, "account_id": connection["account_id"], "bucket": connection["bucket"],
+                "prefix": connection["prefix"], "public_url": connection["public_url"], "items": items}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.put("/settings/brand-library")
+def save_brand_library(body: dict, session: Session = Depends(get_session)) -> dict:
+    from postdesk import brand_library
+
+    try:
+        brand_library.save(session, body)
+        return brand_library_status(session)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.put("/settings/brand-library/selection")
+def select_brand_library(body: dict, session: Session = Depends(get_session)) -> dict:
+    from postdesk import brand_library
+
+    excluded = body.get("excluded")
+    if not isinstance(excluded, list) or any(not isinstance(x, str) for x in excluded) or len(excluded) > 10000:
+        raise HTTPException(status_code=400, detail="Invalid media selection")
+    try:
+        known = {x["key"] for x in brand_library.available(session)}
+        if not set(excluded) <= known:
+            raise ValueError("The library changed. Refresh and try again.")
+        store.put(session, brand_library.EXCLUDED_KEY, excluded)
+        return brand_library_status(session)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.get("/status", response_model=StatusOut)
 def status(session: Session = Depends(get_session)) -> StatusOut:
     store.refresh_config(session)
@@ -276,3 +336,62 @@ def save_connection_key(name: str, body: dict, session: Session = Depends(get_se
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"ok": True}
+
+@router.get("/connections/x")
+def x_connection(session: Session = Depends(get_session)) -> dict:
+    from postdesk.x import credentials as x_credentials
+
+    try:
+        return {"configured": x_credentials.read(session) is not None,
+                "credential_storage": bool(settings.postdesk_credentials_key)}
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.put("/connections/x")
+def save_x_connection(body: dict, session: Session = Depends(get_session)) -> dict:
+    from postdesk.x import credentials as x_credentials
+    from postdesk.x.client import XError
+
+    try:
+        return {"account": x_credentials.save(session, body)}
+    except (ValueError, XError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/connections/x/verify")
+def verify_x_connection(session: Session = Depends(get_session)) -> dict:
+    from postdesk.x import credentials as x_credentials
+    from postdesk.x.client import XClient, XError
+
+    try:
+        saved = x_credentials.read(session)
+        if saved is None:
+            raise HTTPException(status_code=409, detail="Connect X first.")
+        return {"account": XClient(saved).whoami()}
+    except (ValueError, XError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/connections/x/access-level")
+def x_access_level(session: Session = Depends(get_session)) -> dict:
+    """Check the permissions X reports for the saved user token."""
+    import httpx
+
+    from postdesk.x.client import XClient
+    from postdesk.x.credentials import read
+
+    try:
+        saved = read(session)
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if saved is None:
+        raise HTTPException(status_code=409, detail="Connect X first.")
+    client = XClient(saved)
+    url = "https://api.x.com/1.1/account/verify_credentials.json"
+    _, headers, _ = client.signer.sign(url, http_method="GET")
+    try:
+        response = httpx.get(url, headers=headers, timeout=20)
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail="Could not reach X.") from exc
+    return {"status": response.status_code, "access_level": response.headers.get("x-access-level")}

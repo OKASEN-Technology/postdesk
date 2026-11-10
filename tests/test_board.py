@@ -142,6 +142,22 @@ def test_rethink_sends_a_brief_back_and_a_made_post_to_the_revision(session):
         transitions.rethink(session, c, actor="admin", note="x")
 
 
+def test_held_draft_approval_never_remakes_or_schedules_it(session):
+    c = _made(session)
+    transitions.review(session, c, kit.review("hold", notes=[{
+        "target": "slide", "slide": 1, "problem": "The image needs review.", "fix": None,
+    }]))
+    before = [(p.id, [s["asset_id"] for s in p.slides]) for p in posts.drafts(session, c.id)]
+    job_count = len(_jobs(session, c))
+    with pytest.raises(BoardError, match="already has drafts"):
+        transitions.move(session, c, "Approved", actor="admin")
+    assert c.column == "On hold" and len(_jobs(session, c)) == job_count
+    transitions.move(session, c, "Awaiting approval", actor="admin")
+    assert c.column == "Awaiting approval"
+    assert [(p.id, [s["asset_id"] for s in p.slides]) for p in posts.drafts(session, c.id)] == before
+    assert len(_jobs(session, c)) == job_count
+
+
 def test_hold_back_to_the_partner_send_to_review_and_drop(session):
     c = _awaiting(session)
     transitions.move(session, c, "On hold", actor="admin", note="Waiting on the baker.")
@@ -273,10 +289,9 @@ def test_a_hand_made_draft_with_no_card_is_filed_for_the_editor(session):
     assert _jobs(session, c) == [("review", {})]
     assert sync.file_drafts(session, log=lambda _m: None) == []  # filed once
 
-    # Approved by the admin, the maker leaves hand-made drafts alone and the editor reads them.
+    # Send a held hand-made draft directly back to the editor without remaking it.
     transitions.stuck(session, c, "test")
-    transitions.approve(session, c, actor="admin")
-    transitions.make(session, c, call=kit._fake_call(), renderer=kit._renderer())
+    transitions.send_to_review(session, c, actor="admin")
     assert c.column == "In review" and [p.id for p in posts.drafts(session, c.id)] == [post.id]
 
 
@@ -284,6 +299,7 @@ def test_a_new_make_replaces_the_old_drafts(session):
     c = _made(session)
     old = {p.id for p in posts.drafts(session, c.id)}
     transitions.stuck(session, c, "make it again")
+    transitions.back_to_partner(session, c, actor="admin", note="Start again from the brief.")
     transitions.approve(session, c, actor="admin")
     transitions.make(session, c, call=kit._fake_call(), renderer=kit._renderer())
     new = {p.id for p in posts.drafts(session, c.id)}

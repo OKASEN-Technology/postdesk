@@ -24,7 +24,7 @@ from postdesk.telegram import bot as bot_mod
 from tests import boardkit as kit
 from tests import telegramkit as tk
 from tests.conftest import FakeGraph, graph_for
-from tests.test_board import _awaiting, _briefed
+from tests.test_board import _awaiting, _briefed, _made
 
 
 @pytest.fixture(autouse=True)
@@ -192,7 +192,7 @@ def test_the_approve_button_approves_and_clears_its_buttons(session, bot, fake, 
     session.refresh(c)
     assert c.column == "Approved" and _jobs(session, c) == ["make"]
     assert cards.events(session, c)[-1].actor == f"telegram:{tk.CHAT}"
-    assert fake.of("answerCallbackQuery")[-1]["text"] == "Done."
+    assert fake.of("answerCallbackQuery")
     assert fake.of("editMessageReplyMarkup")[-1]["message_id"] == 77
     assert "Approved" in fake.last()["text"]
 
@@ -200,7 +200,7 @@ def test_the_approve_button_approves_and_clears_its_buttons(session, bot, fake, 
 def test_go_and_a_button_on_the_wrong_column_say_why(session, bot, fake, paired):
     c = kit.card(session, column="Inbox")
     handle(session, bot, tk.press(render.data("go", c.id)))
-    assert "needs Planned or Brief ready or On hold" in fake.of("answerCallbackQuery")[-1]["text"]
+    assert "needs Planned or Brief ready or On hold" in fake.last()["text"]
     assert "Not done" in fake.last()["text"] and c.column == "Inbox"
     handle(session, bot, tk.message("/go"))
     assert fake.last()["text"] == "No card is at Brief ready."
@@ -287,8 +287,8 @@ def test_awaiting_approval_sends_the_slides_caption_alt_text_checks_and_schedule
     assert f"Ready to schedule: {c.title}" in "".join(fake.texts())
     assert "<blockquote expandable><b>Alt text</b>" in "".join(fake.texts())
     assert "✓ voice" in "".join(fake.texts()) and "Recommended time" in msg["text"]
-    assert fake.buttons(msg) == ["sc", "pk", "rt", "hd"]
-    assert msg["reply_markup"]["inline_keyboard"][0][0]["text"].startswith("Schedule for ")
+    assert fake.buttons(msg) == ["sc", "bx", "pk", "bt", "im", "rt", "hd"]
+    assert msg["reply_markup"]["inline_keyboard"][0][0]["text"].startswith("Instagram · ")
 
 
 def test_the_schedule_button_schedules_at_the_recommended_time(session, bot, fake, paired):
@@ -347,7 +347,7 @@ def test_hold_and_drop(session, bot, fake, paired):
     handle(session, bot, tk.press(render.data("hd", c.id)))
     session.refresh(c)
     assert c.column == "On hold" and c.stuck_reason == "held from Telegram"
-    assert fake.buttons(fake.last()) == ["rv", "bp", "dr"]
+    assert fake.buttons(fake.last()) == ["im", "rv", "bp", "dr"]
     d = _briefed(session)
     handle(session, bot, tk.message("/hold waiting on the photo", reply_to=_reply_target(session, bot, d)))
     session.refresh(d)
@@ -358,6 +358,167 @@ def test_hold_and_drop(session, bot, fake, paired):
     handle(session, bot, tk.press(render.data("dr", c.id)))
     session.refresh(c)
     assert c.closed_at is not None and {p.status for p in posts.for_card(session, c.id)} == {"rejected"}
+
+
+def _editor_hold(session):
+    card = _made(session)
+    transitions.review(session, card, kit.review("hold", notes=[{
+        "target": "slide", "slide": 1, "problem": "The cover needs a different image.", "fix": None,
+    }], summary="Review the cover image."))
+    return card
+
+
+def test_telegram_upload_replaces_chosen_slide_and_returns_it_for_review(session, bot, fake, paired, monkeypatch):
+    card = _editor_hold(session)
+    monkeypatch.setattr(commands, "library_choices", lambda *_: [])
+    commands.choose_slide(session, bot, tk.CHAT, card)
+    choice_message = _sent_about(session, card)[-1].message_id
+    choice = fake.last()["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
+    rendered = []
+    deps = commands.Deps(renderer=kit._renderer(rendered))
+    handle(session, bot, tk.press(choice, message_id=choice_message), renderer=deps.renderer)
+    upload_message = _sent_about(session, card)[-1].message_id
+    upload = fake.last()["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
+    handle(session, bot, tk.press(upload, message_id=upload_message), renderer=deps.renderer)
+    prompt = _sent_about(session, card)[-1].message_id
+    handle(session, bot, tk.photo(None, reply_to=prompt), renderer=deps.renderer)
+    assert rendered and any(str(rendered[-1].get(field, {}).get("url", "")).startswith("data:image/jpeg;base64,")
+                            for field in ("image", "background"))
+    session.refresh(card)
+    assert card.column == "On hold"
+    assert card.stuck_reason == transitions.IMAGE_EDIT_HOLD
+    assert fake.of("sendMediaGroup") and fake.of("sendPhoto")
+    assert fake.buttons(fake.last()) == ["ok", "im", "rv", "rt", "bp", "dr"]
+    assert any("asset_id" in (s.get("spec", {}).get("image") or {})
+               for p in posts.drafts(session, card.id) for s in p.slides)
+    assert not any(p.status == "approved" for p in posts.for_card(session, card.id))
+    before = [(p.id, [s["asset_id"] for s in p.slides]) for p in posts.drafts(session, card.id)]
+    approval = fake.last()["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
+    handle(session, bot, tk.press(approval), renderer=deps.renderer)
+    session.refresh(card)
+    assert card.column == "Awaiting approval"
+    assert [(p.id, [s["asset_id"] for s in p.slides]) for p in posts.drafts(session, card.id)] == before
+    assert all(p.status == "draft" for p in posts.drafts(session, card.id))
+
+
+def test_telegram_offers_brand_images_and_rejects_old_choices(session, bot, fake, paired, monkeypatch):
+    import io
+
+    card = _editor_hold(session)
+    item = {"key": "vigil/device.jpg", "name": "device.jpg", "url": "https://example.com/device.jpg",
+            "size": len(fake.photo), "type": "image", "enabled": True}
+    monkeypatch.setattr(commands, "library_choices", lambda *_: [item])
+    monkeypatch.setattr(commands.brand_library, "read", lambda *_: {"bucket": "test"})
+
+    class FakeR2:
+        def get_object(self, **_):
+            return {"Body": io.BytesIO(fake.photo)}
+
+    monkeypatch.setattr(commands.brand_library, "_connection", lambda *_: FakeR2())
+    deps = commands.Deps(renderer=kit._renderer())
+    commands.choose_slide(session, bot, tk.CHAT, card)
+    choice_message = _sent_about(session, card)[-1].message_id
+    choice = fake.last()["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
+    handle(session, bot, tk.press(choice, message_id=choice_message), renderer=deps.renderer)
+    photo = fake.of("sendPhoto")[-1]
+    assert "photo" in photo["_files"]
+    pick = photo["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
+    photo_message = _sent_about(session, card)[-2].message_id
+    handle(session, bot, tk.press(pick, message_id=photo_message), renderer=deps.renderer)
+    session.refresh(card)
+    assert card.column == "On hold" and card.stuck_reason == transitions.IMAGE_EDIT_HOLD
+    handle(session, bot, tk.press(pick, message_id=photo_message), renderer=deps.renderer)
+    assert "no longer a draft" in fake.last()["text"]
+
+
+def test_image_button_acknowledges_before_loading_and_survives_expired_callback(session, bot, fake, paired,
+                                                                                  monkeypatch):
+    card = _editor_hold(session)
+    commands.choose_slide(session, bot, tk.CHAT, card)
+    choice_message = _sent_about(session, card)[-1].message_id
+    choice = fake.last()["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
+    fake.clear()
+    fake.fail["answerCallbackQuery"] = "Bad Request: query is too old"
+
+    def load_choices(*_):
+        assert fake.calls[0][0] == "answerCallbackQuery"
+        assert any("Finding brand images" in text for text in fake.texts())
+        return []
+
+    monkeypatch.setattr(commands, "library_choices", load_choices)
+    handle(session, bot, tk.press(choice, message_id=choice_message))
+    assert "No more brand images" in " ".join(fake.texts())
+    assert "Upload a photo" in str(fake.last()["reply_markup"])
+    assert card.column == "On hold"
+
+
+def test_image_button_reports_unexpected_library_failure(session, bot, fake, paired, monkeypatch):
+    card = _editor_hold(session)
+    commands.choose_slide(session, bot, tk.CHAT, card)
+    choice_message = _sent_about(session, card)[-1].message_id
+    choice = fake.last()["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
+
+    def broken_library(*_):
+        raise RuntimeError("connection failed")
+
+    monkeypatch.setattr(commands, "library_choices", broken_library)
+    handle(session, bot, tk.press(choice, message_id=choice_message))
+    assert "couldn't finish the image request" in fake.last()["text"]
+    assert card.column == "On hold"
+
+
+def test_held_review_shows_images_notes_and_approval_without_scheduling(session, bot, fake, paired):
+    card = _editor_hold(session)
+    fake.clear()
+    bot_mod.send_notices(session, bot, log=_quiet)
+    assert fake.of("sendMediaGroup") and fake.of("sendPhoto")
+    message = fake.last()
+    text = "\n".join(fake.texts())
+    assert "The cover needs a different image" in text and "caption" in text
+    assert "scheduling is a separate step" in text
+    assert fake.buttons(message) == ["ok", "im", "rt", "bp", "dr"]
+    data = message["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
+    handle(session, bot, tk.press(data))
+    session.refresh(card)
+    assert card.column == "Awaiting approval"
+    assert all(p.status == "draft" for p in posts.drafts(session, card.id))
+    assert fake.buttons(fake.last()) == ["sc", "bx", "pk", "bt", "im", "rt", "hd"]
+
+
+def test_held_review_can_be_reopened_and_rejects_stale_or_unpaired_approval(session, bot, fake, paired):
+    card = _editor_hold(session)
+    handle(session, bot, tk.message("/review"))
+    data = fake.last()["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
+    handle(session, bot, tk.press(data, chat=tk.OTHER))
+    assert card.column == "On hold" and fake.of("answerCallbackQuery")[-1]["text"] == commands.PRIVATE
+    post = posts.drafts(session, card.id)[0]
+    post.updated_at = post.updated_at + timedelta(seconds=1)
+    session.commit()
+    handle(session, bot, tk.press(data))
+    assert card.column == "On hold" and "out of date" in fake.last()["text"]
+
+
+def test_cannot_accept_held_review_when_telegram_cannot_send_photo(session, bot, fake, paired):
+    card = _editor_hold(session)
+    fake.fail["sendMediaGroup"] = "bad image"
+    handle(session, bot, tk.message("/review"))
+    assert "ok" not in fake.buttons(fake.last())
+    assert card.column == "On hold"
+
+
+def test_failed_revision_reports_current_failure_and_invalidates_old_approval(session, bot, fake, paired):
+    card = _editor_hold(session)
+    handle(session, bot, tk.message("/review"))
+    old_button = fake.last()["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
+    transitions.stuck(session, card, "the revision job failed: renderer unavailable", actor="worker")
+    fake.clear()
+    handle(session, bot, tk.message("/review"))
+    assert "revision job failed" in "\n".join(fake.texts())
+    assert "previous draft" in "\n".join(fake.texts())
+    assert "ok" not in fake.buttons(fake.last())
+    handle(session, bot, tk.press(old_button))
+    assert card.column == "On hold"
+    assert "out of date" in fake.last()["text"]
 
 
 def _reply_target(session, bot, card) -> int:
@@ -402,7 +563,7 @@ def test_a_failed_publish_is_held_and_back_to_draft_puts_it_back(session, bot, f
     handle(session, bot, tk.press(render.data("bd", c.id)))
     session.refresh(c)
     assert c.column == "Awaiting approval" and {p.status for p in posts.for_card(session, c.id)} == {"draft"}
-    assert fake.buttons(fake.last()) == ["sc", "pk", "rt", "hd"]
+    assert fake.buttons(fake.last()) == ["sc", "bx", "pk", "bt", "im", "rt", "hd"]
 
 
 def test_it_went_live_and_a_week_later_the_numbers(session, bot, fake, paired):
@@ -417,7 +578,7 @@ def test_it_went_live_and_a_week_later_the_numbers(session, bot, fake, paired):
     assert c.column == "Measured"
     bot_mod.send_notices(session, bot, log=_quiet)
     texts = "\n".join(fake.texts())
-    assert "Scheduled for" in texts  # the admin scheduled it on the web: the chat hears of it
+    assert "Scheduled:" in texts  # the admin scheduled it on the web: the chat hears of it
     assert "<b>Live:" in texts and "https://www.instagram.com/p/carousel/" in texts
     assert "A week on" in texts and "reach 2,400 · saves 60 · shares 24 · profile visits 18" in texts
 
@@ -556,7 +717,7 @@ def test_brief_and_draft_buttons_link_to_the_private_preview(session):
     card = _briefed(session)
     url = f"https://postdesk.example/cards/{card.id}/preview"
     for buttons in (render.brief_buttons(card), render.schedule_buttons(card, "tomorrow")):
-        assert [{"text": "Preview Instagram post", "url": url}] in buttons["inline_keyboard"]
+        assert [{"text": "Preview Instagram & X", "url": url}] in buttons["inline_keyboard"]
         assert any("callback_data" in button for row in buttons["inline_keyboard"] for button in row)
 
 
@@ -684,3 +845,89 @@ def test_queue_reject_in_the_web_does_not_break_the_chat(session, bot, fake, pai
     sync.queue_changed(session, c.id, actor="admin", log=_quiet)
     handle(session, bot, tk.press(render.data("sc", c.id)))
     assert fake.of("answerCallbackQuery")[-1]["text"] == "That card is closed."
+
+
+def test_schedule_both_and_unschedule_from_telegram(session, bot, fake, paired, monkeypatch):
+    from postdesk.x import credentials
+
+    monkeypatch.setattr(credentials, "read", lambda session: object())
+    card = _awaiting(session)
+    feed = next(p for p in posts.drafts(session, card.id) if p.kind != "story")
+    feed.slides = feed.slides[:4]
+    session.commit()
+    handle(session, bot, tk.press(render.data("bt", card.id)))
+    asked = _sent_about(session, card)[-1]
+    assert asked.purpose == "pick_both_time"
+    handle(session, bot, tk.message("tomorrow 18:00", reply_to=asked.message_id))
+    rows = posts.for_card(session, card.id)
+    ig = next(p for p in rows if p.channel == "instagram" and p.kind != "story")
+    x = next(p for p in rows if p.channel == "x")
+    story = next(p for p in rows if p.kind == "story")
+    assert x.caption == ig.caption and x.slides == ig.slides and x.publish_at == ig.publish_at
+    assert story.channel == "instagram" and story.publish_at == ig.publish_at + timedelta(minutes=15)
+    assert "Instagram" in fake.last()["text"] and "X" in fake.last()["text"]
+    handle(session, bot, tk.message("/unschedule"))
+    assert card.column == "Awaiting approval"
+    assert all(p.status != "approved" for p in posts.for_card(session, card.id))
+
+
+def test_long_shared_caption_is_edited_and_reviewed_before_scheduling(session, bot, fake, paired):
+    card = _awaiting(session)
+    feed = next(p for p in posts.drafts(session, card.id) if p.kind != "story")
+    feed.caption = "a" * 500  # Existing draft from before the shared limit.
+    session.commit()
+    handle(session, bot, tk.press(render.data("bx", card.id)))
+    assert card.column == "Awaiting approval"
+    assert all(p.status == "draft" for p in posts.for_card(session, card.id))
+    asked = _sent_about(session, card)[-1]
+    assert asked.purpose == "edit_shared_caption" and "Nothing was scheduled" in fake.last()["text"]
+    handle(session, bot, tk.message("A shared caption.", reply_to=asked.message_id))
+    assert feed.caption == "A shared caption." and card.column == "In review"
+    assert "review" in _jobs(session, card)
+    assert all(p.status == "draft" for p in posts.for_card(session, card.id))
+
+
+def test_failed_crosspost_validation_is_atomic(session, bot, fake, paired, monkeypatch):
+    from postdesk.x import credentials
+
+    monkeypatch.setattr(credentials, "read", lambda session: None)
+    card = _awaiting(session)
+    feed = next(p for p in posts.drafts(session, card.id) if p.kind != "story")
+    feed.slides = feed.slides[:4]
+    session.commit()
+    handle(session, bot, tk.press(render.data("bx", card.id)))
+    assert "Connect X" in fake.last()["text"]
+    assert card.column == "Awaiting approval"
+    assert all(p.status == "draft" for p in posts.for_card(session, card.id))
+
+
+def test_board_can_reopen_a_specific_card(session, bot, fake, paired):
+    first = _awaiting(session)
+    _briefed(session)
+    handle(session, bot, tk.message("/board"))
+    assert "vw" in fake.buttons(fake.last())
+    handle(session, bot, tk.press(render.data("vw", first.id)))
+    assert "Ready to schedule" in "".join(fake.texts())
+
+
+def test_retry_failed_x_does_not_repost_instagram(session, bot, fake, paired, monkeypatch):
+    from postdesk.x import credentials
+
+    monkeypatch.setattr(credentials, "read", lambda session: object())
+    card = _awaiting(session)
+    feed = next(p for p in posts.drafts(session, card.id) if p.kind != "story")
+    feed.slides = feed.slides[:4]
+    session.commit()
+    handle(session, bot, tk.press(render.data("bx", card.id)))
+    rows = posts.for_card(session, card.id)
+    x = next(p for p in rows if p.channel == "x")
+    for p in rows:
+        p.status = "failed" if p.channel == "x" else "published"
+    x.error = "X rejected the request"
+    session.commit()
+    sync.sync(session, log=_quiet)
+    handle(session, bot, tk.press(render.data("bd", card.id)))
+    assert "Retry X" in fake.last()["reply_markup"]["inline_keyboard"][0][0]["text"]
+    handle(session, bot, tk.press(render.data("sc", card.id)))
+    assert x.status == "approved"
+    assert all(p.status == "published" for p in rows if p.channel == "instagram")

@@ -21,6 +21,7 @@ from postdesk.config import config
 from postdesk.db import session as db_session
 from postdesk.db.models import Card, Job
 from postdesk.main import create_app
+from postdesk.maker.render import RenderError, RendererUnavailable
 from tests import boardkit as kit
 
 
@@ -32,6 +33,11 @@ def _voice(monkeypatch):
 
 def _quiet(_m):
     pass
+
+
+def test_renderer_outage_retries_but_invalid_render_does_not():
+    assert jobs.is_transient(RendererUnavailable("gateway unavailable"))
+    assert not jobs.is_transient(RenderError("invalid slide"))
 
 
 def test_one_running_job_per_card(session):
@@ -221,3 +227,41 @@ def test_from_an_rss_item_to_awaiting_approval_and_live(session, monkeypatch):
     jobs.housekeeping(session, deps, log=_quiet, scout=False)
     session.refresh(card)
     assert card.column == "Live"
+
+
+def test_renderer_retry_explains_waiting_on_card(session):
+    from postdesk.api.routers.cards import _busy
+
+    c = kit.card(session)
+    job = jobs.enqueue(session, "revise", c.id)
+    job.error = "RendererUnavailable: temporarily unavailable"
+    session.commit()
+    assert _busy(session, [c.id])[c.id] == "Waiting for the image renderer; retrying"
+    job.error = "RendererNotReady: temporarily unavailable"
+    session.commit()
+    assert _busy(session, [c.id])[c.id] == "Waiting for the image renderer; retrying"
+
+
+def test_renderer_preflight_wait_does_not_consume_attempts_and_recovers(session, monkeypatch):
+    from postdesk.maker.render import RendererNotReady
+
+    card = kit.card(session, column="Making")
+    jobs.enqueue(session, "make", card.id)
+    available = False
+
+    def make(_session, _card, _payload, _deps):
+        if not available:
+            raise RendererNotReady("renderer asleep")
+
+    monkeypatch.setattr(jobs, "_handlers", lambda: {"make": make})
+    for _ in range(jobs.MAX_ATTEMPTS + 1):
+        job = jobs.run(session, jobs.claim(session), log=_quiet)
+        assert job.status == "queued" and job.attempts == 0
+        assert job.run_after > jobs.now_utc()
+        job.run_after = jobs.now_utc()
+        session.commit()
+    available = True
+    job = jobs.run(session, jobs.claim(session), log=_quiet)
+    assert job.status == "done" and job.attempts == 1
+    session.refresh(card)
+    assert card.column == "Making" and card.stuck_reason is None

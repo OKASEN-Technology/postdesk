@@ -18,6 +18,7 @@ from postdesk.instagram.publish import (  # noqa: F401
     CAROUSEL_MIN,
     HASHTAG_MAX,
     IMAGE_MAX_BYTES,
+    SHARED_CAPTION_MAX,
     Post,
     Slide,
     build_post,

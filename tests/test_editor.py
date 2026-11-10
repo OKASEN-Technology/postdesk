@@ -160,7 +160,7 @@ def test_a_revision_that_changes_nothing_or_invents_a_figure_goes_on_hold(sessio
     editor.turn(session, c, call=kit.scripted(kit.review("revise", notes=[kit.caption_note()])))
     revision.turn(session, c, {"notes": []}, call=kit.scripted({"reply": "Nothing words can fix.", "posts": []}),
                   renderer=kit._renderer())
-    assert c.column == "On hold" and "could not fix this with words alone: Nothing words can fix." in c.stuck_reason
+    assert c.column == "On hold" and "could not apply the requested changes: Nothing words can fix." in c.stuck_reason
 
     c = _in_review(session)
     editor.turn(session, c, call=kit.scripted(kit.review("revise", notes=[kit.caption_note()])))
@@ -181,4 +181,70 @@ def test_the_admins_rethink_note_reaches_the_revision(session):
     call = kit.scripted(kit.revision(feed.id))
     revision.turn(session, c, payload, call=call, renderer=kit._renderer())
     assert "The admin's note (act on it):\nWarmer first line." in call.calls[0]["messages"][0]["content"][0]["text"]
-    assert c.column == "In review"
+    assert c.column == "On hold"
+    assert c.stuck_reason == transitions.REVISION_HOLD
+    assert all(kind != "review" for kind, _ in _queued(session, c))
+
+
+def test_approved_partner_revision_updates_existing_drafts(session):
+    c = _in_review(session)
+    old_ids = {p.id for p in posts.drafts(session, c.id)}
+    _clear(session)
+    transitions.back_to_partner(session, c, actor="admin", note="Keep the pictures and change the logo.")
+    transitions.brief(session, c, kit.partner_reply(), candidates=[])
+    _clear(session)
+    transitions.approve(session, c, actor="admin")
+    assert c.column == "Making"
+    ((kind, payload),) = _queued(session, c)
+    assert kind == "revise" and "change the logo" in payload["note"]
+    assert {p.id for p in posts.drafts(session, c.id)} == old_ids
+
+
+def test_brand_refresh_preserves_slide_picture_and_returns_preview(session):
+    rendered = []
+    c = _in_review(session, rendered)
+    drafts = posts.drafts(session, c.id)
+    before = [(p.id, [s.get("spec") for s in p.slides]) for p in drafts]
+    _clear(session)
+    transitions.rethink(session, c, actor="admin", note="Refresh the logo, keep the pictures.")
+    d = {"reply": "Refreshed the branding.", "posts": [], "refresh_theme": True, "unresolved": []}
+    rendered.clear()
+    revision.turn(session, c, {"note": "Refresh the logo, keep the pictures.", "from": "user"},
+                  call=kit.scripted(d), renderer=kit._renderer(rendered))
+    assert c.column == "On hold" and rendered
+    for post_id, specs in before:
+        post = session.get(type(drafts[0]), post_id)
+        for original, slide in zip(specs, post.slides, strict=True):
+            assert (slide.get("spec") or {}).get("image") == (original or {}).get("image")
+            assert (slide.get("spec") or {}).get("background") == (original or {}).get("background")
+    assert "Refreshed the branding" in cards.thread(session, c)[-1].body_md
+
+
+def test_revision_uses_requested_brand_picture_on_the_existing_slide(session, monkeypatch):
+    import hashlib
+
+    from postdesk import brand_library
+    from postdesk.telegram import commands
+    from tests.test_maker import _jpeg
+
+    c = _in_review(session)
+    feed = next(p for p in posts.drafts(session, c.id) if p.kind == "carousel")
+    old_ids = [s["asset_id"] for s in feed.slides]
+    item = {"key": "vigil/brand/device.jpg", "name": "brand/device.jpg", "type": "image",
+            "enabled": True, "size": 1000, "url": "https://example.com/device.jpg"}
+    image_key = "brand-" + hashlib.sha256(item["key"].encode()).hexdigest()[:16]
+    monkeypatch.setattr(brand_library, "read", lambda session: {"bucket": "test"})
+    monkeypatch.setattr(brand_library, "available", lambda session: [item])
+    monkeypatch.setattr(commands, "brand_image_bytes", lambda session, item: _jpeg((200, 200), "revision"))
+    transitions.rethink(session, c, actor="admin", note="Use the device picture on slide 1.")
+    reply = {"reply": "Replaced the picture on slide 1.", "refresh_theme": False, "unresolved": [],
+             "posts": [{"id": str(feed.id), "caption": None, "alt_texts": None,
+                        "slides": [{"index": 0, "fields": {}, "image_key": image_key}]}]}
+    rendered = []
+    revision.turn(session, c, {"note": "Use the device picture on slide 1.", "from": "user"},
+                  call=kit.scripted(reply), renderer=kit._renderer(rendered))
+    session.refresh(feed)
+    assert c.column == "On hold" and c.stuck_reason == transitions.REVISION_HOLD
+    assert feed.slides[0]["asset_id"] != old_ids[0]
+    assert [s["asset_id"] for s in feed.slides[1:]] == old_ids[1:]
+    assert len(rendered) == 1 and rendered[0]["image"]["url"].startswith("data:image/jpeg;base64,")

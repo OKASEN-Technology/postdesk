@@ -296,7 +296,8 @@ def test_patch_spec_keeps_to_the_slides_words_and_the_known_numbers():
     assert maker.slide_words(None) is None
 
 
-def test_the_renderer_client_validates_before_it_posts_and_reports_failures():
+def test_the_renderer_client_validates_before_it_posts_and_reports_failures(monkeypatch):
+    monkeypatch.setattr(maker.render.time, "sleep", lambda _: None)
     rendered = []
     r = _renderer(rendered)
     assert r.health()["ok"] is True
@@ -315,6 +316,52 @@ def test_the_renderer_client_validates_before_it_posts_and_reports_failures():
         lambda req: (_ for _ in ()).throw(httpx.ConnectError("refused", request=req)))))
     with pytest.raises(maker.RenderError, match="ConnectError"):
         bad.render({"type": "cta", "kicker": "k", "headline": "h", "body": "b"})
+
+
+def test_renderer_retries_temporary_gateway_failures_without_exposing_html(monkeypatch):
+    delays = []
+    monkeypatch.setattr(maker.render.time, "sleep", delays.append)
+    responses = iter([httpx.Response(502, text="<html>gateway down</html>"),
+                      httpx.Response(503, text="<html>starting</html>"),
+                      httpx.Response(200, content=b"jpeg", headers={"content-type": "image/jpeg"})])
+    client = httpx.Client(transport=httpx.MockTransport(
+        lambda req: httpx.Response(200, json={}) if req.method == "GET" else next(responses)))
+    spec = {"type": "cta", "kicker": "k", "headline": "h", "body": "b"}
+    assert maker.Renderer("http://renderer.test", client=client).render(spec) == b"jpeg"
+    assert delays == [3, 8]
+
+    client = httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(502, text="<html>secret</html>")))
+    with pytest.raises(maker.RenderError, match="temporarily unavailable") as error:
+        maker.Renderer("http://renderer.test", client=client).render(spec)
+    assert "<html>" not in str(error.value)
+
+
+def test_renderer_wakes_sleeping_service_before_retry(monkeypatch):
+    monkeypatch.setattr(maker.render.time, "sleep", lambda _: None)
+    methods = []
+
+    def handler(request):
+        methods.append((request.method, request.url.path))
+        if request.method == "GET":
+            return httpx.Response(200, json={})
+        if len(methods) == 1:
+            return httpx.Response(502)
+        return httpx.Response(200, content=b"jpeg", headers={"content-type": "image/jpeg"})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    spec = {"type": "cta", "kicker": "k", "headline": "h", "body": "b"}
+    assert maker.Renderer("http://renderer.test", client=client).render(spec) == b"jpeg"
+    assert methods == [("POST", "/render"), ("GET", "/health"), ("POST", "/render")]
+
+
+def test_renderer_does_not_retry_invalid_requests(monkeypatch):
+    delays = []
+    monkeypatch.setattr(maker.render.time, "sleep", delays.append)
+    client = httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(400, json={"detail": "bad slide"})))
+    with pytest.raises(maker.RenderError, match="bad slide"):
+        maker.Renderer("http://renderer.test", client=client).render(
+            {"type": "cta", "kicker": "k", "headline": "h", "body": "b"})
+    assert delays == []
 
 
 # ---------------------------------------------------------------- end to end
@@ -399,6 +446,18 @@ def test_revise_re_renders_only_the_changed_slide(session):
     queue.approve(session, post.id, publish_at=NOW, approved_by="admin")
     with pytest.raises(queue.QueueError, match="post is approved"):
         maker.revise(session, post.id, slides=[{"index": 1, "fields": {"body": "x"}}], renderer=_renderer())
+
+
+def test_theme_change_rerenders_each_stored_slide_during_revision(session):
+    post, _ = maker.make(session, _facts(), "article", call=_fake_call(), renderer=_renderer(), now=NOW)
+    rendered = []
+    renderer = _renderer(rendered)
+    renderer.theme = "vigil"
+    assert make_mod.needs_theme_refresh(session, post, "vigil")
+    out = maker.revise(session, post.id, slides=[{"index": 1, "fields": {"headline": "Cold dough waits"}}],
+                       renderer=renderer, refresh_theme=True)
+    assert len(rendered) == len(post.slides)
+    assert out.slides[1]["spec"]["headline"] == "Cold dough waits"
 
 
 # ---------------------------------------------------------------- the API and the CLI
@@ -500,3 +559,51 @@ def test_doctor_checks_the_renderer(monkeypatch):
     monkeypatch.setattr(config.theme, "name", "mine")
     c = doctor.check_renderer(_renderer())
     assert not c.ok and "'mine' is not among them" in c.detail
+
+
+def test_replace_picture_rerenders_only_selected_slide(session):
+    from postdesk import storage
+    post, _ = maker.make(session, _facts(), "article", call=_fake_call(), renderer=_renderer(), now=NOW)
+    image = storage.store_asset(session, data=_jpeg((200, 200), "new picture"), filename="chosen.jpg",
+                                content_type="image/jpeg", uploaded_by="admin")
+    before = [s["asset_id"] for s in post.slides]
+    rendered = []
+    post = maker.revise(session, post.id, images=[{"index": 0, "asset_id": str(image.id)}],
+                        renderer=_renderer(rendered))
+    assert len(rendered) == 1 and rendered[0]["image"]["url"].startswith("data:image/jpeg;base64,")
+    assert post.slides[0]["spec"]["image"]["asset_id"] == str(image.id)
+    assert post.slides[0]["asset_id"] != before[0]
+    assert [s["asset_id"] for s in post.slides[1:]] == before[1:]
+
+
+def test_web_image_picker_updates_draft_and_rejects_stale_selection(session, admin, monkeypatch):
+    from postdesk import storage
+    post, _ = maker.make(session, _facts(), "article", call=_fake_call(), renderer=_renderer(), now=NOW)
+    monkeypatch.setattr(make_mod, "Renderer", lambda *a, **k: _renderer())
+    original = post.slides[0]["asset_id"]
+    image = storage.store_asset(session, data=_jpeg((200, 200), "web choice"), filename="web.jpg",
+                                content_type="image/jpeg", uploaded_by="admin")
+    got = admin.get(f"/api/posts/{post.id}").json()
+    assert got["slides"][0]["can_replace_image"]
+    r = admin.post(f"/api/posts/{post.id}/slides/0/image",
+                   json={"expected_asset_id": original, "asset_id": str(image.id)})
+    assert r.status_code == 200, r.text
+    updated = r.json()
+    assert updated["slides"][0]["asset_id"] != original
+    assert updated["slides"][0]["spec"]["image"]["asset_id"] == str(image.id)
+    assert updated["slides"][1]["asset_id"] == post.slides[1]["asset_id"]
+    stale = admin.post(f"/api/posts/{post.id}/slides/0/image",
+                       json={"expected_asset_id": original, "asset_id": str(image.id)})
+    assert stale.status_code == 409
+
+
+def test_renderer_health_treats_gateway_and_network_errors_as_retryable():
+    for response in (httpx.Response(502), httpx.ConnectError("offline")):
+        def handler(_request, response=response):
+            if isinstance(response, Exception):
+                raise response
+            return response
+
+        client = httpx.Client(transport=httpx.MockTransport(handler))
+        with pytest.raises(maker.render.RendererUnavailable, match="temporarily unavailable"):
+            maker.Renderer("http://renderer.test", client=client).health()

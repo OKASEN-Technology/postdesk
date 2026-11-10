@@ -121,8 +121,9 @@ Rules the checker enforces:
 Slides: one idea per slide, short. Each slot lists the fields to fill; a field it does not list is an empty string.
 Field rules: {json.dumps(FIELD_RULES)}
 
-Caption (Instagram limit 2,200 characters; aim for 500 to 900): a hook line (the reason to read, not the title),
-2 or 3 short paragraphs in the account's voice, one ask (the link in bio), {hashtag_rule}. A rank such as #1 is not a
+Caption for Instagram and X: at most 280 characters total, including spaces, links and hashtags. X counts
+some characters and links differently, so aim comfortably below 280. Use a concise hook and at most one ask,
+{hashtag_rule}. A rank such as #1 is not a
 hashtag. Don't @-mention anyone; credits are added by a person. A Story-only post has no caption: leave it empty.
 
 Alt text: one per slide, describing what is on it (the image and the words), for screen readers.

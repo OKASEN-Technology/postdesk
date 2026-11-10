@@ -7,7 +7,7 @@ export type Status = "draft" | "approved" | "publishing" | "published" | "failed
 export interface Slide {
   asset_id: string; alt_text: string; url: string | null;
   /** A made slide's render spec and the words on it that can be changed (null for an uploaded slide). */
-  spec: Record<string, unknown> | null; words: Record<string, string> | null;
+  spec: Record<string, unknown> | null; words: Record<string, string> | null; can_replace_image: boolean;
 }
 export interface SlidePatch { index: number; fields: Record<string, string> }
 
@@ -33,7 +33,7 @@ export interface Config {
 
 export interface AuthStatus { configured: boolean; authenticated: boolean }
 export interface Asset { id: string; url: string; public_url: string; width: number; height: number }
-export interface Lint { errors: string[]; warnings: string[]; hashtags: number }
+export interface Lint { errors: string[]; warnings: string[]; hashtags: number; characters: number; x_weighted_characters: number; max_characters: number }
 
 // ---------------------------------------------------------------- the board
 
@@ -92,7 +92,7 @@ export interface SettingsValues {
     feed_slot: string; story_slot: string; max_feed_per_day: number; max_story_per_day: number; min_lead_hours: number;
     publisher_hours: [string, string];
   };
-  voice: { text: string | null; hashtags: string[]; max_hashtags: number; retired_phrases: string[]; file: string; from_file: boolean };
+  voice: { text: string | null; brand_assets_url: string | null; hashtags: string[]; max_hashtags: number; retired_phrases: string[]; file: string; from_file: boolean };
   theme: { name: string };
   sources: Record<string, Record<string, unknown>>;
   images: { sources: string[] };
@@ -152,6 +152,9 @@ const json = (method: string, body?: unknown): RequestInit => ({
   method, headers: { "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body),
 });
 
+export interface BrandItem { key: string; name: string; url: string; type: "image" | "video"; size: number; enabled: boolean }
+export interface BrandLibrary { configured: boolean; account_id?: string; bucket?: string; prefix?: string; public_url?: string; items: BrandItem[] }
+
 export const api = {
   authStatus: () => call<AuthStatus>("/api/auth/status"),
   setup: (password: string) => call<AuthStatus>("/api/auth/setup", json("POST", { password })),
@@ -165,7 +168,11 @@ export const api = {
     call<Post>("/api/posts", json("POST", body)),
   updatePost: (id: string, body: { title?: string; caption?: string; alt_texts?: string[]; slides?: SlidePatch[] }) =>
     call<Post>(`/api/posts/${id}`, json("PATCH", body)),
-  approve: (id: string, publish_at: string) => call<Post>(`/api/posts/${id}/approve`, json("POST", { publish_at })),
+  crosspostPublishedX: (id: string) => call<Post>(`/api/posts/${id}/crosspost-x`, json("POST")),
+  approve: (id: string, publish_at: string, crosspost_x = false) => call<Post>(`/api/posts/${id}/approve`, json("POST", { publish_at, crosspost_x })),
+  xConnection: () => call<{configured: boolean; credential_storage: boolean}>("/api/connections/x"),
+  saveXConnection: (credentials: {api_key: string; api_secret: string; access_token: string; access_secret: string}) => call<{account: {username: string; id: string}}>("/api/connections/x", json("PUT", credentials)),
+  verifyXConnection: () => call<{account: {username: string; id: string}}>("/api/connections/x/verify", json("POST")),
   action: (id: string, what: "unapprove" | "reject" | "back-to-draft") => call<Post>(`/api/posts/${id}/${what}`, json("POST")),
   lint: (caption: string) => call<Lint>("/api/posts/lint-caption", json("POST", { caption })),
   cards: () => call<CardRow[]>("/api/cards"),
@@ -191,6 +198,10 @@ export const api = {
   testConnection: (name: string) => call<{ok: boolean; detail: string}>(`/api/connections/${name}/test`, json("POST")),
   saveKey: (name: string, key: string) => call<{ok: boolean}>(`/api/connections/${name}/key`, json("PUT", {key})),
   settings: () => call<SettingsData>("/api/settings"),
+  brandLibrary: () => call<BrandLibrary>("/api/settings/brand-library"),
+  saveBrandLibrary: (body: Record<string, string>) => call<BrandLibrary>("/api/settings/brand-library", json("PUT", body)),
+  selectBrandLibrary: (excluded: string[]) => call<BrandLibrary>("/api/settings/brand-library/selection", json("PUT", {excluded})),
+  testBrandAssets: (url: string) => call<{count: number}>("/api/settings/brand-assets/test", json("POST", { url })),
   saveSettings: (patch: Partial<Record<Section, unknown>>) => call<SettingsData>("/api/settings", json("PUT", patch)),
   status: () => call<AgentStatus>("/api/status"),
   pause: () => call<AgentStatus>("/api/agents/pause", json("POST")),
@@ -202,6 +213,8 @@ export const api = {
   permissions: (revoked = false) => call<Permission[]>(`/api/permissions${revoked ? "?revoked=true" : ""}`),
   addPermission: (body: PermissionIn) => call<Permission>("/api/permissions", json("POST", body)),
   revokePermission: (id: string) => call<Permission>(`/api/permissions/${id}`, json("DELETE")),
+  replaceSlideImage: (postId: string, index: number, body: Record<string, string>) => call<Post>(`/api/posts/${postId}/slides/${index}/image`, json("POST", body)),
+  importBrandVideo: (key: string) => call<Asset>("/api/assets/brand-video", json("POST", {key})),
   upload: (file: File, credit: string) => {
     const form = new FormData();
     form.append("file", file);

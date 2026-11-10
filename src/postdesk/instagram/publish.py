@@ -8,8 +8,7 @@ Publishing is a three-step dance the API imposes:
   2. create a media container per image, then a CAROUSEL container over them;
   3. poll until Instagram has processed the container, then `media_publish`.
 
-Reels keep their place in the schema (`kind = "reel"`) but are not published
-here yet (docs/roadmap.md, M5).
+Reels use the same approved queue and Instagram video containers.
 """
 
 from __future__ import annotations
@@ -22,12 +21,14 @@ from pathlib import Path
 
 import httpx
 from PIL import Image as PILImage
+from twitter_text import parse_tweet
 
 from postdesk.config import config
 from postdesk.instagram.graph import Account, Graph, InstagramError
 
 # Instagram's own limits (Content Publishing API reference).
 CAPTION_MAX = 2200
+SHARED_CAPTION_MAX = 280
 HASHTAG_MAX = 30
 MENTION_MAX = 20
 CAROUSEL_MIN, CAROUSEL_MAX = 2, 20
@@ -99,12 +100,18 @@ def hashtags(caption: str) -> list[str]:
     return re.findall(r"(?<!\w)#(?!\d+(?!\w))\w+", caption)
 
 
-def lint_caption(caption: str) -> tuple[list[str], list[str]]:
+def lint_caption(caption: str, *, enforce_shared_limit: bool = True) -> tuple[list[str], list[str]]:
     """(errors, warnings). Errors are Instagram's hard limits; warnings are
     the user's own rules from `[voice]` in postdesk.toml."""
     errors, warnings = [], []
     if len(caption) > CAPTION_MAX:
         errors.append(f"caption is {len(caption)} characters (Instagram max {CAPTION_MAX})")
+    if enforce_shared_limit:
+        if len(caption) > SHARED_CAPTION_MAX:
+            errors.append(f"Caption is {len(caption)} characters; the Instagram and X limit is {SHARED_CAPTION_MAX}")
+        weighted = parse_tweet(caption).weightedLength
+        if weighted > SHARED_CAPTION_MAX:
+            errors.append(f"Caption counts as {weighted} characters on X; maximum {SHARED_CAPTION_MAX}")
     tags = hashtags(caption)
     mentions = re.findall(r"(?<![\w.])@[\w.]+", caption)
     if len(tags) > HASHTAG_MAX:
@@ -239,8 +246,6 @@ def publish_hosted(
     permalink}; the permalink lookup is best-effort, so a post that went
     live is never reported as a failure (and never retried into a
     duplicate)."""
-    if kind == "reel":
-        raise InstagramError("reels are not published by this version (docs/roadmap.md)")
 
     def image_container(url: str, alt: str, **extra) -> str:
         params = {"image_url": url, "access_token": account.token, **extra}
@@ -248,7 +253,10 @@ def publish_hosted(
             params["alt_text"] = alt
         return graph.post(f"{account.ig_user_id}/media", **params)["id"]
 
-    if kind == "story":
+    if kind == "reel":
+        creation_id = graph.post(f"{account.ig_user_id}/media", media_type="REELS", video_url=items[0][0],
+                                 caption=caption, access_token=account.token)["id"]
+    elif kind == "story":
         # The Graph API rejects alt_text on a STORIES container; it is feed-only.
         creation_id = image_container(items[0][0], "", media_type="STORIES")
     elif kind == "image":

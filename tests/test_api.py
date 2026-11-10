@@ -105,6 +105,27 @@ def test_media_serves_only_referenced_assets(admin, client):
     assert anonymous.get("/media/00000000-0000-0000-0000-000000000000").status_code == 404
 
 
+def test_private_s3_serves_referenced_media(admin, monkeypatch):
+    from postdesk.storage import s3
+
+    for name in ("storage_s3_endpoint", "storage_s3_bucket", "storage_s3_access_key_id",
+                 "storage_s3_secret_access_key"):
+        monkeypatch.setattr(settings, name, "configured")
+    monkeypatch.setattr(settings, "storage_s3_public_base_url", None)
+    objects = {}
+    monkeypatch.setattr(s3, "put", lambda sha, data, content_type: objects.update({sha: data}))
+    monkeypatch.setattr(s3, "get", lambda sha: objects[sha])
+    monkeypatch.setattr(s3, "has", lambda sha: sha in objects)
+    orphan = _upload(admin, colour=(1, 2, 3)).json()
+    post = _post(admin, n=1)
+    assert orphan["storage"] == "s3"
+    anonymous = TestClient(create_app(), base_url="https://postdesk.example")
+    assert anonymous.get(f"/media/{orphan['id']}").status_code == 404
+    response = anonymous.get(f"/media/{post['slides'][0]['asset_id']}")
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "image/jpeg"
+
+
 def test_queue_endpoints_and_immutability(admin):
     post = _post(admin)
     assert post["status"] == "draft" and post["publish_at"] is not None
@@ -154,6 +175,9 @@ def test_suggest_times_and_lint(admin):
     caption = "A game-changer " + " ".join(f"#t{i}" for i in range(7))
     lint = admin.post("/api/posts/lint-caption", json={"caption": caption})
     assert lint.json()["hashtags"] == 7 and len(lint.json()["warnings"]) == 2 and lint.json()["errors"] == []
+    counts = admin.post("/api/posts/lint-caption", json={"caption": "😀" * 141}).json()
+    assert counts["characters"] == 141 and counts["x_weighted_characters"] == 282
+    assert counts["max_characters"] == 280 and counts["errors"]
 
 
 def test_config_and_health(admin):
@@ -163,3 +187,41 @@ def test_config_and_health(admin):
     assert admin.get("/api/health").json()["ok"] is True
     # The web app owns every other path; unbuilt, a note is served.
     assert admin.get("/posts/abc").status_code == 200
+
+
+def test_reel_video_stream_supports_ranges(admin, session):
+    from postdesk import queue, storage
+
+    data = b"0123456789"
+    asset = storage.store_asset(session, data=data, filename="clip.mp4", content_type="video/mp4")
+    queue.create_post(session, kind="reel", title="clip", slides=[{"asset_id": str(asset.id)}])
+    url = f"/media/{asset.id}"
+    response = admin.get(url, headers={"range": "bytes=2-5"})
+    assert response.status_code == 206
+    assert response.content == b"2345"
+    assert response.headers["content-range"] == "bytes 2-5/10"
+    assert admin.get(url, headers={"range": "bytes=-3"}).content == b"789"
+    assert admin.get(url, headers={"range": "bytes=99-"}).status_code == 416
+    assert admin.get(url).content == data
+
+
+def test_brand_library_connection_and_selection_api(admin, monkeypatch):
+    from cryptography.fernet import Fernet
+
+    from postdesk import brand_library
+
+    monkeypatch.setattr(settings, "postdesk_credentials_key", Fernet.generate_key().decode())
+    sample = [{"key": "vigil/helmet.jpg", "name": "helmet.jpg", "url": "https://assets.example/vigil/helmet.jpg",
+               "type": "image", "size": 20}]
+    monkeypatch.setattr(brand_library, "objects", lambda values: sample)
+    values = {"account_id": "a" * 32, "bucket": "brand-bucket", "prefix": "vigil/",
+              "public_url": "https://assets.example/vigil/", "access_key_id": "example-key",
+              "secret_access_key": "example-secret"}
+    result = admin.put("/api/settings/brand-library", json=values)
+    assert result.status_code == 200
+    assert "example-secret" not in result.text and "example-key" not in result.text
+    assert result.json()["items"][0]["enabled"] is True
+    result = admin.put("/api/settings/brand-library/selection", json={"excluded": ["vigil/helmet.jpg"]})
+    assert result.status_code == 200 and result.json()["items"][0]["enabled"] is False
+    bad = admin.put("/api/settings/brand-library/selection", json={"excluded": ["unknown"]})
+    assert bad.status_code == 400

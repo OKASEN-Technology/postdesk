@@ -65,10 +65,12 @@ STORAGE_S3_SECRET_ACCESS_KEY=...
 STORAGE_S3_PUBLIC_BASE_URL=https://pub-xxxx.r2.dev    # the bucket's public address
 ```
 
-The bucket must be **publicly readable** (R2: enable the public bucket URL;
-S3: a bucket policy allowing `s3:GetObject`). All five variables set means
-images go to the bucket; any one unset means local disk behind
-`PUBLIC_BASE_URL`. `postdesk doctor` says which.
+The first four variables enable bucket storage. If the app is reachable at
+`PUBLIC_BASE_URL`, leave `STORAGE_S3_PUBLIC_BASE_URL` blank to keep the bucket
+private: Postdesk serves referenced images from its public `/media/<id>` URLs.
+Anyone with one of those URLs can view that image, including draft assets.
+If the app is not publicly reachable, set the public bucket URL and make the
+bucket publicly readable. `postdesk doctor` checks the configured image URL.
 
 ## Hosted platforms
 

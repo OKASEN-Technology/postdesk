@@ -1,0 +1,12 @@
+{
+  "images": [
+    {
+      "path": "product.jpg",
+      "description": "Product photograph"
+    },
+    {
+      "path": "team/workshop.png",
+      "description": "Workshop photograph"
+    }
+  ]
+}

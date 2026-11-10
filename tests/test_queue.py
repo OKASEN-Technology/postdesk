@@ -34,7 +34,7 @@ def _carousel(session, n=2, caption="A caption.", **kw) -> SocialPost:
 def test_create_validates_kind_count_and_jpeg(session):
     with pytest.raises(queue.QueueError, match="carousel takes"):
         _carousel(session, n=1)
-    with pytest.raises(queue.QueueError, match="JPEG only"):
+    with pytest.raises(queue.QueueError, match="image/jpeg"):
         queue.create_post(session, kind="image", title="png", slides=[{"asset_id": _asset(session, "image/png")}])
     with pytest.raises(queue.QueueError, match="no caption"):
         queue.create_post(session, kind="story", title="story", caption="hi", slides=[{"asset_id": _asset(session)}])
@@ -71,11 +71,20 @@ def test_lifecycle_edit_approve_unapprove_reject(session):
         queue.approve(session, post.id, publish_at=when, approved_by="admin")
 
 
-def test_a_reel_is_kept_in_the_schema_but_not_approvable(session):
+def test_reel_requires_video_and_approval_before_publishing(session):
+    with pytest.raises(queue.QueueError, match="video/mp4"):
+        queue.create_post(session, kind="reel", title="reel", slides=[{"asset_id": _asset(session)}])
     post = queue.create_post(session, kind="reel", title="reel", caption="Soon.",
-                             slides=[{"asset_id": _asset(session)}])
-    with pytest.raises(queue.QueueError, match="reels"):
-        queue.approve(session, post.id, publish_at=datetime.now(UTC) + timedelta(days=1), approved_by="admin")
+                             slides=[{"asset_id": _asset(session, "video/mp4")}])
+    when = datetime.now(UTC) - timedelta(minutes=1)
+    assert post not in queue.due(session)
+    with pytest.raises(queue.QueueError, match="cross-posting"):
+        queue.approve(session, post.id, publish_at=when, approved_by="admin", crosspost_x=True)
+    queue.approve(session, post.id, publish_at=when, approved_by="admin")
+    fake = FakeGraph()
+    queue.publish_due(session, graph_for(fake), log=lambda *_: None)
+    assert post.status == "published"
+    assert any(p.get("media_type") == "REELS" for m, path, p in fake.calls if m == "POST")
 
 
 def test_publish_due_posts_only_due_approved(session):
@@ -226,3 +235,19 @@ def test_publisher_hours_are_local():
     assert queue.within_publisher_hours(datetime(2031, 7, 1, 5, 30, tzinfo=UTC))
     nxt = queue.next_publisher_window(datetime(2031, 3, 3, 22, 0, tzinfo=UTC))
     assert nxt == _london(2031, 3, 4, 6)
+
+
+def test_shared_caption_limit_and_legacy_draft(session):
+    post = _carousel(session, caption="x" * 280)
+    with pytest.raises(queue.QueueError, match="280"):
+        queue.update_post(session, post.id, caption="x" * 281)
+    with pytest.raises(queue.QueueError, match="on X"):
+        queue.update_post(session, post.id, caption="😀" * 141)
+    post.caption = "x" * 281  # A draft created before the shared limit.
+    session.commit()
+    assert queue.update_post(session, post.id, title="New title").title == "New title"
+    with pytest.raises(queue.QueueError, match="280"):
+        queue.approve(session, post.id, publish_at=datetime.now(UTC) + timedelta(hours=1), approved_by="admin")
+    queue.update_post(session, post.id, caption="Shorter caption")
+    assert queue.approve(session, post.id, publish_at=datetime.now(UTC) + timedelta(hours=1),
+                         approved_by="admin").status == "approved"

@@ -44,4 +44,12 @@ describe("render", () => {
     const out = await render(fixture("cta.json"), { svg: true });
     expect(out.toString("utf8")).toMatch(/^<svg/);
   });
+
+  it("renders the Vigil theme without the default template footer", async () => {
+    const theme = loadTheme("vigil");
+    expect(theme.wordmark.text).toBe("VIGIL");
+    expect(theme.ctaLine).toBe("");
+    expect(theme.strings.linkInBio).toBe("");
+    expect(await render(fixture("cta.json"), { theme: "vigil" })).toBeTruthy();
+  });
 });

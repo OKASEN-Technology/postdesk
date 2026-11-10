@@ -149,10 +149,16 @@ def test_an_image_story_never_sends_alt_text_but_feed_media_does():
     assert [p.get("alt_text") for p in sent["carousel"]] == ["Cover.", "Second.", None]
 
 
-def test_reels_are_refused_for_now():
-    acct = ig.resolve_account(graph_for(FakeGraph()))
-    with pytest.raises(ig.InstagramError, match="reels"):
-        ig.publish_hosted("reel", [("https://postdesk.example/media/v", "")], "", graph_for(FakeGraph()), acct)
+def test_reel_uses_video_container_then_waits_and_publishes():
+    fake = FakeGraph()
+    graph = graph_for(fake)
+    acct = ig.resolve_account(graph)
+    url = "https://postdesk.example/media/v"
+    ig.publish_hosted("reel", [(url, "")], "Caption", graph, acct)
+    media = next(p for m, path, p in fake.calls if m == "POST" and path == "IG1/media")
+    assert media == {"media_type": "REELS", "video_url": url, "caption": "Caption", "access_token": "PAGE"}
+    assert fake.polls["C1"] == 2
+    assert any(path.endswith("/media_publish") for _, path, _ in fake.calls)
 
 
 def test_container_error_is_reported():

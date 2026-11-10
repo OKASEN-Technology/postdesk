@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import {
-  api, errorText, type Config, type Connections, type ModelChoice, type Permission, type PermissionIn, type Section, type SettingsData,
+  api, errorText, type Config, type Connections, type ModelChoice, type Permission, type PermissionIn, type Section, type SettingsData, type BrandLibrary,
 } from "../api";
 import { CARD, DANGER, ErrorNote, INPUT, LABEL, PRIMARY, SECONDARY } from "../ui";
 
@@ -30,6 +30,7 @@ export default function Settings({ onChange }: { config: Config; onChange?: () =
         AI keys can be saved securely below; other service credentials are managed by the server administrator.
       </p>
       <ConnectionsPanel />
+      <XConnection />
       <div className="mt-6 grid gap-6 lg:grid-cols-2">
         <div className="space-y-6">
           <Telegram data={data} onChange={saved} />
@@ -41,6 +42,7 @@ export default function Settings({ onChange }: { config: Config; onChange?: () =
           <Account {...props} />
           <Schedule {...props} />
           <Voice {...props} />
+          <BrandLibraryPanel />
           <Images {...props} />
           <Sources {...props} />
         </div>
@@ -380,6 +382,53 @@ function Schedule({ data, save }: SectionProps) {
   );
 }
 
+function BrandLibraryPanel() {
+  const [library, setLibrary] = useState<BrandLibrary | null>(null);
+  const [form, setForm] = useState({account_id: "", bucket: "", prefix: "", public_url: "", access_key_id: "", secret_access_key: ""});
+  const [editing, setEditing] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const [search, setSearch] = useState("");
+  const [page, setPage] = useState(0);
+  const [excluded, setExcluded] = useState<string[]>([]);
+  const receive = (v: BrandLibrary) => { setLibrary(v); setExcluded(v.items.filter((i) => !i.enabled).map((i) => i.key)); };
+  useEffect(() => { api.brandLibrary().then(receive).catch((e) => setMessage(errorText(e))); }, []);
+  const visible = (library?.items ?? []).filter((i) => i.name.toLowerCase().includes(search.toLowerCase()));
+  const update = (key: keyof typeof form, value: string) => setForm((v) => ({...v, [key]: value}));
+  const connect = async (e: React.FormEvent) => {
+    e.preventDefault(); setBusy(true); setMessage("");
+    try { receive(await api.saveBrandLibrary(form)); setForm({...form, access_key_id: "", secret_access_key: ""}); setEditing(false); setMessage("Connected. Media will be discovered automatically."); }
+    catch (error) { setMessage(errorText(error)); } finally { setBusy(false); }
+  };
+  const saveSelection = async () => {
+    setBusy(true); setMessage("");
+    try { receive(await api.selectBrandLibrary(excluded)); setMessage("Media selection saved."); }
+    catch (error) { setMessage(errorText(error)); } finally { setBusy(false); }
+  };
+  return <section className={`${CARD} space-y-3`}>
+    <div className="flex flex-wrap items-center justify-between gap-2"><h2 className="text-base font-semibold">Brand media library</h2>
+      {library?.configured && <button className="text-xs text-moss hover:underline" onClick={() => { setForm({account_id: library.account_id ?? "", bucket: library.bucket ?? "", prefix: library.prefix ?? "", public_url: library.public_url ?? "", access_key_id: "", secret_access_key: ""}); setEditing(!editing); }}>Change connection</button>}</div>
+    <p className="text-sm text-ink-2">Connect a public R2 folder. Postdesk finds new media automatically. Enabled JPEG, PNG and WebP images and sampled video frames may be shared with your AI provider when preparing ideas.</p>
+    {(!library?.configured || editing) && <form className="space-y-2" onSubmit={connect}>
+      {([ ["account_id", "Cloudflare account ID", "Account ID"], ["bucket", "Bucket name", "vigil-public-assets"], ["prefix", "Folder prefix (optional)", "vigil/"], ["public_url", "Public folder URL", "https://assets.example.com/vigil/"], ["access_key_id", "Read-only access key ID", "Access key ID"], ["secret_access_key", "Read-only secret access key", "Secret access key"] ] as const).map(([key, label, placeholder]) => <label key={key} className="block text-xs text-ink-2">{label}<input className={INPUT} value={form[key]} type={key === "secret_access_key" ? "password" : "text"} autoComplete="off" placeholder={placeholder} onChange={(e) => update(key, e.target.value)} required={key !== "prefix"} /></label>)}
+      <p className="text-xs text-ink-2">Use an R2 Object Read only key scoped to this bucket. The credentials are encrypted and never displayed after saving.</p>
+      <button className={PRIMARY} disabled={busy}>{busy ? "Connecting…" : "Connect library"}</button>
+    </form>}
+    {library?.configured && !editing && <>
+      <p className="text-xs text-ink-2">{library.items.length} images and videos found · {library.bucket}/{library.prefix}</p>
+      <input className={INPUT} value={search} placeholder="Find a file" aria-label="Find brand media" onChange={(e) => {setSearch(e.target.value); setPage(0);}} />
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">{visible.slice(page * 12, page * 12 + 12).map((item) => <label key={item.key} className="min-w-0 rounded-md border border-line p-2 text-xs">
+        {item.type === "video" ? <video src={item.url} controls preload="none" className="aspect-square w-full bg-paper-2 object-contain" /> : <img src={item.url} alt="" loading="lazy" className="aspect-square w-full bg-paper-2 object-contain" />}
+        <span className="mt-2 flex items-start gap-2"><input type="checkbox" checked={!excluded.includes(item.key)} onChange={(e) => setExcluded((old) => e.target.checked ? old.filter((x) => x !== item.key) : [...old, item.key])} /><span className="min-w-0 break-all">{item.name}</span></span>
+      </label>)}</div>
+      {!visible.length && <p className="text-xs text-ink-2">No matching media.</p>}
+      <div className="flex flex-wrap items-center gap-3 text-xs"><button type="button" className={SECONDARY} disabled={page === 0} onClick={() => setPage(page - 1)}>Previous</button><span>Page {page + 1} of {Math.max(1, Math.ceil(visible.length / 12))}</span><button type="button" className={SECONDARY} disabled={(page + 1) * 12 >= visible.length} onClick={() => setPage(page + 1)}>Next</button></div>
+      <button type="button" className={PRIMARY} disabled={busy} onClick={() => void saveSelection()}>{busy ? "Saving…" : "Save media selection"}</button>
+    </>}
+    {message && <p role="status" className="text-xs text-ink-2">{message}</p>}
+  </section>;
+}
+
 function Voice({ data, save }: SectionProps) {
   const v = data.values.voice;
   const [text, setText] = useState(v.text ?? "");
@@ -535,4 +584,39 @@ function Permissions() {
       )}
     </section>
   );
+}
+
+function XConnection() {
+  const blank = {api_key: "", api_secret: "", access_token: "", access_secret: ""};
+  const [values, setValues] = useState(blank);
+  const [status, setStatus] = useState<{configured: boolean; credential_storage: boolean} | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const load = () => api.xConnection().then(setStatus).catch((e) => setMessage(errorText(e)));
+  useEffect(() => { void load(); }, []);
+  async function save() {
+    setBusy(true); setMessage("");
+    try { const result = await api.saveXConnection(values); setValues(blank); setEditing(false); setMessage(`Connected and verified @${result.account.username}.`); await load(); }
+    catch (e) { setMessage(errorText(e)); } finally { setBusy(false); }
+  }
+  async function verify() {
+    setBusy(true); setMessage("");
+    try { const result = await api.verifyXConnection(); setMessage(`Verified @${result.account.username}.`); }
+    catch (e) { setMessage(errorText(e)); } finally { setBusy(false); }
+  }
+  return <section className={`${CARD} mt-6`}>
+    <h2 className="text-base font-semibold">X connection</h2>
+    <p className="mt-1 text-sm text-ink-2">Connect your X developer app to choose X alongside Instagram for individual posts. X API usage may incur charges.</p>
+    {status && <p className="mt-2 text-sm">{status.configured ? "Credentials saved" : "Not connected"}{!status.credential_storage && " · Credential encryption must be configured on the server."}</p>}
+    <div className="mt-3 flex gap-2">
+      <button type="button" className={SECONDARY} disabled={busy || !status?.credential_storage} onClick={() => { setEditing(!editing); setValues(blank); }}>{editing ? "Cancel" : status?.configured ? "Replace credentials" : "Connect X"}</button>
+      {status?.configured && <button type="button" className={SECONDARY} disabled={busy} onClick={() => void verify()}>Verify account</button>}
+    </div>
+    {editing && <form className="mt-3 space-y-2" onSubmit={(e) => { e.preventDefault(); void save(); }}>
+      {([ ["api_key", "API key"], ["api_secret", "API key secret"], ["access_token", "Access token"], ["access_secret", "Access token secret"] ] as const).map(([key, label]) => <label className="block text-xs text-ink-2" key={key}>{label}<input type="password" autoComplete="off" required value={values[key]} className={INPUT} onChange={(e) => setValues({...values, [key]: e.target.value})} /></label>)}
+      <button className={PRIMARY} disabled={busy}>{busy ? "Verifying…" : "Verify and save"}</button>
+    </form>}
+    {message && <p role="status" className="mt-2 text-sm text-ink-2">{message}</p>}
+  </section>;
 }

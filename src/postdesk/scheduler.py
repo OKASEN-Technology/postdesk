@@ -50,11 +50,24 @@ def run_once(*, force: bool = False, log=print, graph: ig.Graph | None = None) -
             except ig.InstagramError as e:
                 result.error = str(e)
                 log(f"publish: {e}")
+            except Exception as e:
+                session.rollback()
+                log(f"Instagram publisher: {type(e).__name__}")
+                result.error = "Instagram publisher failed. Check the service logs."
             else:
                 result.published = [str(p.id) for p in attempted if p.status == "published"]
                 result.failed = [str(p.id) for p in attempted if p.status == "failed"]
                 if not attempted:
                     log("publish: nothing due")
+            try:
+                from postdesk.x import publisher as x_publisher
+
+                x_attempted = x_publisher.publish_due(session, log=log)
+                result.published.extend(str(p.id) for p in x_attempted if p.status == "published")
+                result.failed.extend(str(p.id) for p in x_attempted if p.status == "failed")
+            except Exception as e:
+                log(f"X publisher: {type(e).__name__}")
+                result.error = result.error or "X publisher failed. Check the service logs."
         try:
             result.insights = insights.collect(session, graph, log=log)
         except Exception as e:

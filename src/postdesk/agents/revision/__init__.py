@@ -38,14 +38,30 @@ def turn(session: Session, card: Card, payload: dict, *, call=None, renderer=Non
     if not drafts:
         transitions.stuck(session, card, "nothing to revise: the card has no drafts", actor="maker")
         return None
+    if renderer is None and call is None:
+        # Wake the renderer before paying for an AI response that cannot be applied.
+        from postdesk.maker.render import Renderer
+
+        renderer = Renderer()
+        renderer.health()
     if call is None:
         def call(**kw):
             return llm.structured_call(agent=AGENT, session=session, card_id=card.id, ref=card.source_ref, **kw)
 
+    from postdesk import brand_library
+
+    candidates = []
+    try:
+        if brand_library.read(session):
+            candidates = brand_library.select_for_card(
+                brand_library.available(session), f"{card.title} {card.body_md or ''} {payload.get('note') or ''}")
+    except ValueError:
+        pass  # The revision can still change words and report unavailable media.
     d = call(system=context.system(), schema=context.schema(),
-             messages=[{"role": "user", "content": context.user_content(session, card, drafts, payload)}])
+             messages=[{"role": "user", "content": context.user_content(session, card, drafts, payload, candidates)}])
     d, dropped = strip_source_lines(d)
     if dropped:
         d["reply"] = (d.get("reply") or "") + " Not changed: " + "; ".join(dropped) + "."
-    transitions.revise(session, card, d, renderer=renderer)
+    transitions.revise(session, card, d, renderer=renderer, candidates=candidates,
+                       for_user=payload.get("from") == "user")
     return d

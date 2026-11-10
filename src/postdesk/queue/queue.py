@@ -42,19 +42,20 @@ class QueueError(ValueError):
     """Invalid post, or a transition the post's status does not allow."""
 
 
-def _validate(session: Session, kind: str, caption: str, slides: list[dict]) -> None:
+def _validate(session: Session, kind: str, caption: str, slides: list[dict], *,
+              allow_legacy_caption: bool = False) -> None:
     if kind not in KINDS:
         raise QueueError(f"kind must be one of {', '.join(KINDS)}")
     n = len(slides)
     if kind in ("image", "story") and n != 1:
         raise QueueError(f"a {kind} is one image ({n} given)")
     if kind == "reel" and n != 1:
-        raise QueueError(f"a reel is one cover image ({n} given)")
+        raise QueueError(f"a reel is one video ({n} given)")
     if kind == "carousel" and not ig.CAROUSEL_MIN <= n <= ig.CAROUSEL_MAX:
         raise QueueError(f"a carousel takes {ig.CAROUSEL_MIN}–{ig.CAROUSEL_MAX} images ({n} given)")
     if kind == "story" and caption:
         raise QueueError("stories have no caption")
-    errors, _ = ig.lint_caption(caption)
+    errors, _ = ig.lint_caption(caption, enforce_shared_limit=not allow_legacy_caption)
     if errors:
         raise QueueError("; ".join(errors))
     for s in slides:
@@ -64,8 +65,9 @@ def _validate(session: Session, kind: str, caption: str, slides: list[dict]) -> 
             asset = None
         if asset is None:
             raise QueueError(f"asset {s.get('asset_id')} not found")
-        if asset.content_type != "image/jpeg":
-            raise QueueError(f"asset {asset.id} is {asset.content_type}; Instagram takes JPEG only")
+        expected = "video/mp4" if kind == "reel" else "image/jpeg"
+        if asset.content_type != expected:
+            raise QueueError(f"A {kind} requires {expected}; asset {asset.id} is {asset.content_type}.")
 
 
 def _normalise_slides(slides: list[dict]) -> list[dict]:
@@ -142,6 +144,8 @@ def update_post(
     (M1)."""
     post = _get(session, post_id, lock=True)
     _require(post, "draft")
+    if post.channel == "x":
+        raise QueueError("An X copy cannot be edited separately from its Instagram post.")
     slides = list(post.slides)
     for i, (asset_id, spec) in (rendered or {}).items():
         if not 0 <= i < len(slides):
@@ -152,7 +156,7 @@ def update_post(
             raise QueueError(f"{len(alt_texts)} alt texts for {len(slides)} slides")
         slides = [{**s, "alt_text": a.strip()} for s, a in zip(slides, alt_texts, strict=True)]
     new_caption = post.caption if caption is None else caption.strip()
-    _validate(session, post.kind, new_caption, slides)
+    _validate(session, post.kind, new_caption, slides, allow_legacy_caption=new_caption == post.caption)
     post.caption = new_caption
     post.slides = slides
     if title is not None:
@@ -163,7 +167,8 @@ def update_post(
     return post
 
 
-def approve(session: Session, post_id: uuid.UUID, *, publish_at: datetime, approved_by: str) -> SocialPost:
+def approve(session: Session, post_id: uuid.UUID, *, publish_at: datetime, approved_by: str,
+            crosspost_x: bool = False, commit: bool = True) -> SocialPost:
     if publish_at.tzinfo is None:
         raise QueueError("publish_at needs a timezone")
     if not approved_by.strip():
@@ -171,8 +176,34 @@ def approve(session: Session, post_id: uuid.UUID, *, publish_at: datetime, appro
     post = _get(session, post_id, lock=True)
     _require(post, "draft")
     _validate(session, post.kind, post.caption, post.slides)
-    if post.kind == "reel":
-        raise QueueError("reels cannot be published by this version yet")
+    if post.kind == "reel" and (crosspost_x or post.channel == "x"):
+        raise QueueError("Reel cross-posting to X is not supported. Schedule it for Instagram only.")
+    if crosspost_x or post.channel == "x":
+        from postdesk.x.publisher import validate_post
+        validate_post(session, post)
+    if post.channel == "x":
+        from postdesk.x.credentials import read
+        if read(session) is None:
+            raise QueueError("Connect X in Settings before scheduling.")
+        source_id = (post.media or {}).get("instagram_post_id")
+        source = session.get(SocialPost, uuid.UUID(source_id)) if source_id else None
+        if source is None or source.caption != post.caption or source.slides != post.slides:
+            raise QueueError("The Instagram post has changed. Schedule a new matching copy instead.")
+    if crosspost_x:
+        existing = session.scalars(select(SocialPost).where(
+            SocialPost.channel == "x",
+            SocialPost.status.in_(("approved", "publishing", "published", "failed", "draft")),
+            SocialPost.media["instagram_post_id"].as_string() == str(post.id)).with_for_update()).first()
+        if existing is not None:
+            raise QueueError("An X copy already exists for this post. Check its status before scheduling again.")
+        if post.channel != "instagram":
+            raise QueueError("Choose an Instagram post to cross-post to X.")
+        from postdesk.x.credentials import read
+        try:
+            if read(session) is None:
+                raise QueueError("Connect X in Settings before scheduling to both platforms.")
+        except ValueError as exc:
+            raise QueueError(str(exc)) from exc
     now = now_utc()
     post.status = "approved"
     post.publish_at = publish_at
@@ -180,14 +211,71 @@ def approve(session: Session, post_id: uuid.UUID, *, publish_at: datetime, appro
     post.approved_at = now
     post.error = None
     post.updated_at = now
-    session.commit()
-    session.refresh(post)
+    if crosspost_x:
+        session.add(SocialPost(channel="x", kind=post.kind, status="approved", title=post.title,
+                               caption=post.caption, slides=post.slides, card_id=post.card_id,
+                               source_ref=post.source_ref, media={"instagram_post_id": str(post.id)},
+                               publish_at=publish_at, approved_by=approved_by.strip(), approved_at=now,
+                               created_by=post.created_by, created_at=now, updated_at=now))
+    if commit:
+        session.commit()
+        session.refresh(post)
+    else:
+        session.flush()
     return post
+
+
+
+def crosspost_published_to_x(session: Session, post_id: uuid.UUID, *, approved_by: str) -> SocialPost:
+    """Schedule an exact copy of a published Instagram post without reposting it."""
+    if not approved_by.strip():
+        raise QueueError("approved_by is required")
+    post = _get(session, post_id, lock=True)
+    if post.channel != "instagram" or post.status != "published":
+        raise QueueError("Choose a published Instagram post to schedule on X.")
+    from postdesk.x.credentials import read
+    from postdesk.x.publisher import validate_post
+
+    _validate(session, post.kind, post.caption, post.slides)
+    validate_post(session, post)
+    existing = session.scalars(select(SocialPost).where(
+        SocialPost.channel == "x",
+        SocialPost.status.in_(("approved", "publishing", "published", "failed", "draft")),
+        SocialPost.media["instagram_post_id"].as_string() == str(post.id)).with_for_update()).first()
+    if existing is not None:
+        raise QueueError("An X copy already exists for this post. Check its status before scheduling again.")
+    try:
+        if read(session) is None:
+            raise QueueError("Connect X in Settings before scheduling.")
+    except ValueError as exc:
+        raise QueueError(str(exc)) from exc
+    now = now_utc()
+    copy = SocialPost(channel="x", kind=post.kind, status="approved", title=post.title,
+                      caption=post.caption, slides=post.slides, card_id=post.card_id,
+                      source_ref=post.source_ref, media={"instagram_post_id": str(post.id)},
+                      publish_at=now, approved_by=approved_by.strip(), approved_at=now,
+                      created_by=post.created_by, created_at=now, updated_at=now)
+    session.add(copy)
+    session.commit()
+    session.refresh(copy)
+    return copy
+
+
+def _cancel_x_copy(session: Session, post: SocialPost) -> None:
+    if post.channel == "instagram":
+        # Cancel any unsent X copy under the same transaction and row lock.
+        mirrors = session.scalars(select(SocialPost).where(
+            SocialPost.channel == "x", SocialPost.status == "approved",
+            SocialPost.media["instagram_post_id"].as_string() == str(post.id)).with_for_update()).all()
+        for mirror in mirrors:
+            mirror.status = "rejected"
+            mirror.updated_at = now_utc()
 
 
 def unapprove(session: Session, post_id: uuid.UUID) -> SocialPost:
     post = _get(session, post_id, lock=True)
     _require(post, "approved")
+    _cancel_x_copy(session, post)
     post.status = "draft"
     post.approved_by = post.approved_at = None
     post.updated_at = now_utc()
@@ -199,6 +287,7 @@ def unapprove(session: Session, post_id: uuid.UUID) -> SocialPost:
 def reject(session: Session, post_id: uuid.UUID) -> SocialPost:
     post = _get(session, post_id, lock=True)
     _require(post, "draft", "approved", "failed")
+    _cancel_x_copy(session, post)
     post.status = "rejected"
     post.updated_at = now_utc()
     session.commit()
@@ -220,21 +309,21 @@ def back_to_draft(session: Session, post_id: uuid.UUID) -> SocialPost:
     return post
 
 
-def due(session: Session, now: datetime | None = None) -> list[SocialPost]:
+def due(session: Session, now: datetime | None = None, *, channel: str = "instagram") -> list[SocialPost]:
     now = now or now_utc()
     return list(
         session.execute(
             select(SocialPost)
-            .where(SocialPost.status == "approved", SocialPost.publish_at <= now)
+            .where(SocialPost.status == "approved", SocialPost.publish_at <= now, SocialPost.channel == channel)
             .order_by(SocialPost.publish_at)
         ).scalars()
     )
 
 
-def _claim_next(session: Session, now: datetime) -> SocialPost | None:
+def _claim_next(session: Session, now: datetime, *, channel: str = "instagram") -> SocialPost | None:
     post = session.execute(
         select(SocialPost)
-        .where(SocialPost.status == "approved", SocialPost.publish_at <= now)
+        .where(SocialPost.status == "approved", SocialPost.publish_at <= now, SocialPost.channel == channel)
         .order_by(SocialPost.publish_at)
         .limit(1)
         .with_for_update(skip_locked=True)
@@ -263,6 +352,9 @@ def publish_due(session: Session, graph: ig.Graph, *, now: datetime | None = Non
         attempted.append(post)
         log(f"{post.title} ({post.kind}, {post.id})")
         try:
+            errors, _ = ig.lint_caption(post.caption)
+            if errors:
+                raise ig.InstagramError("; ".join(errors))
             items = []
             for s in post.slides:
                 asset = session.get(ContentAsset, uuid.UUID(s["asset_id"]))

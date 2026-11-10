@@ -64,7 +64,7 @@ def init(
     handle = typer.prompt("Your Instagram username (without the @)", default="yourhandle")
     site = typer.prompt("The site your bio links to", default="https://example.com")
     while True:
-        tz = typer.prompt("Your timezone (IANA name)", default="Europe/London")
+        tz = typer.prompt("Your timezone (IANA name)", default="America/New_York")
         try:
             ZoneInfo(tz)
             break
@@ -194,11 +194,43 @@ def scout_cmd(
 @app.command()
 def cron(force: bool = typer.Option(False, "--force", help="Publish even outside publisher hours.")) -> None:
     """One pass: publish what is due, then collect insights. For a system cron or a hosted cron job."""
-    from postdesk import scheduler
+    import httpx
+
+    from postdesk import queue, scheduler, store
+    from postdesk.config import settings
+    from postdesk.db.session import SessionLocal
+
+    # A hosted cron starts in a fresh process, so it must load the same saved
+    # account, publishing window and credentials as the web application.
+    with SessionLocal() as session:
+        store.refresh_config(session, log=_echo)
+        # Instagram fetches private-bucket media through the web service. A
+        # sleeping Render free instance must be awake before Meta fetches it.
+        if not settings.storage_s3_public_base_url and queue.due(session):
+            try:
+                response = httpx.get(f"{settings.public_base_url.rstrip('/')}/api/health", timeout=120)
+                response.raise_for_status()
+            except httpx.HTTPError:
+                _err("Media host is unavailable; posts remain queued for the next run.")
+                raise typer.Exit(1) from None
 
     result = scheduler.run_once(force=force)
     if result.published or result.failed:
         _echo(f"published {len(result.published)}, failed {len(result.failed)}")
+
+    # Run this after publishing so an ideas or wake-up failure cannot block posts.
+    if settings.postdesk_daily_ideas:
+        from postdesk.board import daily_ideas
+
+        try:
+            with SessionLocal() as session:
+                wake = daily_ideas.ensure_due(session)
+            if wake:
+                response = httpx.get(f"{settings.public_base_url.rstrip('/')}/api/health", timeout=120)
+                response.raise_for_status()
+                _echo("daily idea: worker awake")
+        except Exception as e:
+            _err(f"daily idea: {type(e).__name__}; will retry on the next cron run")
     raise typer.Exit(0 if result.ok else 1)
 
 
