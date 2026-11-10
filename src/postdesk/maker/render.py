@@ -156,6 +156,13 @@ class Renderer:
                 if attempt == len(RETRY_DELAYS_S):
                     raise RendererUnavailable(f"rendering a {spec['type']} slide failed ({resp.status_code}): "
                                       "the renderer is temporarily unavailable. Please try again.")
+            # A sleeping service may reject POSTs without starting. A small GET
+            # can wake it before the next attempt; a failed probe must not mask
+            # the original error or prevent the normal retries.
+            try:
+                self.client.get(f"{self.url}/health", timeout=TIMEOUT_S)
+            except httpx.HTTPError:
+                pass
             time.sleep(RETRY_DELAYS_S[attempt])
         if resp.status_code != 200:
             try:

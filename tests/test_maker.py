@@ -324,7 +324,8 @@ def test_renderer_retries_temporary_gateway_failures_without_exposing_html(monke
     responses = iter([httpx.Response(502, text="<html>gateway down</html>"),
                       httpx.Response(503, text="<html>starting</html>"),
                       httpx.Response(200, content=b"jpeg", headers={"content-type": "image/jpeg"})])
-    client = httpx.Client(transport=httpx.MockTransport(lambda _: next(responses)))
+    client = httpx.Client(transport=httpx.MockTransport(
+        lambda req: httpx.Response(200, json={}) if req.method == "GET" else next(responses)))
     spec = {"type": "cta", "kicker": "k", "headline": "h", "body": "b"}
     assert maker.Renderer("http://renderer.test", client=client).render(spec) == b"jpeg"
     assert delays == [3, 8]
@@ -333,6 +334,24 @@ def test_renderer_retries_temporary_gateway_failures_without_exposing_html(monke
     with pytest.raises(maker.RenderError, match="temporarily unavailable") as error:
         maker.Renderer("http://renderer.test", client=client).render(spec)
     assert "<html>" not in str(error.value)
+
+
+def test_renderer_wakes_sleeping_service_before_retry(monkeypatch):
+    monkeypatch.setattr(maker.render.time, "sleep", lambda _: None)
+    methods = []
+
+    def handler(request):
+        methods.append((request.method, request.url.path))
+        if request.method == "GET":
+            return httpx.Response(200, json={})
+        if len(methods) == 1:
+            return httpx.Response(502)
+        return httpx.Response(200, content=b"jpeg", headers={"content-type": "image/jpeg"})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    spec = {"type": "cta", "kicker": "k", "headline": "h", "body": "b"}
+    assert maker.Renderer("http://renderer.test", client=client).render(spec) == b"jpeg"
+    assert methods == [("POST", "/render"), ("GET", "/health"), ("POST", "/render")]
 
 
 def test_renderer_does_not_retry_invalid_requests(monkeypatch):
