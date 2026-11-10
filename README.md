@@ -336,3 +336,20 @@ Any time: `/board` (every open card), `/queue` (what is scheduled),
 `/resume`, `/help`. A command that is not a reply acts on the one card it
 fits (the only brief waiting, say); if there are several, the bot asks you
 to reply to the right card's message.
+
+### Connections in Settings
+
+The Connections section reports whether each service is configured and offers
+an explicit connection test. Configured does not mean tested. The storage test
+uploads a small test image; the renderer test creates a test slide. Instagram,
+Telegram, storage and renderer settings continue to be managed by the server
+administrator. Telegram must also be paired to a chat.
+
+To save OpenAI or Claude keys in the UI, set a stable `POSTDESK_CREDENTIALS_KEY`
+in the server's secret manager. Generate a Fernet key with
+`python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'`.
+Back it up securely outside the database and use the same key on every web and
+worker instance. UI keys are verified before saving, encrypted in the database,
+and override environment keys. Losing or changing the encryption key makes saved
+credentials unreadable. Never put that key in the database or commit it to Git.
+Key verification confirms provider authentication, not model access or billing.

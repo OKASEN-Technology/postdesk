@@ -115,6 +115,11 @@ export interface SettingsData {
   paused: Paused | null;
   notifiers: Notifier[];
 }
+export interface Connections {
+  openai: { configured: boolean; selected: boolean }; anthropic: { configured: boolean; selected: boolean };
+  instagram: { configured: boolean }; telegram: { configured: boolean; paired: boolean };
+  storage: { configured: boolean; kind: string }; renderer: { configured: boolean }; credential_storage: boolean;
+}
 export interface AgentStatus {
   paused: Paused | null; month_usd: number; ceiling_usd: number; over: boolean; stopped: string | null;
   telegram: "off" | "unpaired" | "paired";
@@ -182,6 +187,9 @@ export const api = {
   runs: () => call<Runs>("/api/runs?limit=50"),
   sources: () => call<Source[]>("/api/sources"),
   scan: (key: string) => call<Scan>(`/api/sources/${encodeURIComponent(key)}/scan`, json("POST")),
+  connections: () => call<Connections>("/api/connections"),
+  testConnection: (name: string) => call<{ok: boolean; detail: string}>(`/api/connections/${name}/test`, json("POST")),
+  saveKey: (name: string, key: string) => call<{ok: boolean}>(`/api/connections/${name}/key`, json("PUT", {key})),
   settings: () => call<SettingsData>("/api/settings"),
   saveSettings: (patch: Partial<Record<Section, unknown>>) => call<SettingsData>("/api/settings", json("PUT", patch)),
   status: () => call<AgentStatus>("/api/status"),

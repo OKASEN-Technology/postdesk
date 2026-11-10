@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import {
-  api, errorText, type Config, type ModelChoice, type Permission, type PermissionIn, type Section, type SettingsData,
+  api, errorText, type Config, type Connections, type ModelChoice, type Permission, type PermissionIn, type Section, type SettingsData,
 } from "../api";
 import { CARD, DANGER, ErrorNote, INPUT, LABEL, PRIMARY, SECONDARY } from "../ui";
 
@@ -27,8 +27,9 @@ export default function Settings({ onChange }: { config: Config; onChange?: () =
       <p className="mt-1 max-w-3xl text-sm text-ink-2">
         Changes here apply at once and are kept in the database, over{" "}
         {data.config_path ? <code className="text-xs">{data.config_path}</code> : "the defaults (no postdesk.toml found)"}.
-        Tokens and passwords live in <code className="text-xs">.env</code>, never here.
+        AI keys can be saved securely below; other service credentials are managed by the server administrator.
       </p>
+      <ConnectionsPanel />
       <div className="mt-6 grid gap-6 lg:grid-cols-2">
         <div className="space-y-6">
           <Telegram data={data} onChange={saved} />
@@ -47,6 +48,64 @@ export default function Settings({ onChange }: { config: Config; onChange?: () =
       <Permissions />
     </>
   );
+}
+
+
+function ConnectionsPanel() {
+  const [data, setData] = useState<Connections | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [messages, setMessages] = useState<Record<string, string>>({});
+  const [verified, setVerified] = useState<Record<string, boolean>>({});
+  const [editing, setEditing] = useState<string | null>(null);
+  const [key, setKey] = useState("");
+  const load = () => api.connections().then(setData).catch((e) => setMessages((m) => ({ ...m, general: errorText(e) })));
+  useEffect(() => { void load(); }, []);
+  const test = async (name: string) => {
+    setBusy(name);
+    try { const r = await api.testConnection(name); setVerified((v) => ({ ...v, [name]: r.ok })); setMessages((m) => ({ ...m, [name]: r.detail })); }
+    catch (e) { setVerified((v) => ({ ...v, [name]: false })); setMessages((m) => ({ ...m, [name]: errorText(e) })); }
+    finally { setBusy(null); }
+  };
+  const saveKey = async (name: string) => {
+    setBusy(name);
+    try { await api.saveKey(name, key); setKey(""); setEditing(null); setVerified((v) => ({ ...v, [name]: true })); await load(); setMessages((m) => ({ ...m, [name]: "Key verified and saved securely." })); }
+    catch (e) { setMessages((m) => ({ ...m, [name]: errorText(e) })); }
+    finally { setBusy(null); }
+  };
+  if (!data) return <div className="mt-5"><ErrorNote text={messages.general} /></div>;
+  const rows = [
+    ["openai", "OpenAI", data.openai.configured, data.openai.selected ? "Used by selected models" : "No selected models"],
+    ["anthropic", "Claude", data.anthropic.configured, data.anthropic.selected ? "Used by selected models" : "No selected models"],
+    ["instagram", "Instagram", data.instagram.configured, "Required to publish"],
+    ["telegram", "Telegram", data.telegram.configured, data.telegram.paired ? "Chat paired" : "Chat not paired"],
+    ["storage", "Image storage", data.storage.configured, `${data.storage.kind} storage`],
+    ["renderer", "Slide renderer", data.renderer.configured, "Creates post slides"],
+  ] as const;
+  return <section className={`${CARD} mt-6`}>
+    <h2 className="text-base font-semibold">Connections and setup</h2>
+    <p className="mt-1 text-sm text-ink-2">Configured means settings are present. Test each connection to verify it. Storage testing saves a small test image.</p>
+    <ul className="mt-3 divide-y divide-line">
+      {rows.map(([name, label, configured, description]) => <li key={name} className="py-3">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+          <span className="w-32 font-medium">{label}</span>
+          <span className={configured ? "text-moss" : "text-clay"}>{configured ? verified[name] === true ? "Verified just now" : verified[name] === false ? "Test failed" : "Configured · not yet verified" : "Not configured"}</span>
+          <span className="text-xs text-ink-2">{description}</span>
+          <span className="ml-auto flex gap-3">
+            {configured && <button type="button" disabled={busy !== null} className="text-moss hover:underline disabled:opacity-50" onClick={() => void test(name)}>{busy === name ? "Testing…" : "Test"}</button>}
+            {(name === "openai" || name === "anthropic") && <button type="button" disabled={busy !== null || !data.credential_storage} className="text-moss hover:underline disabled:opacity-50" onClick={() => { setKey(""); setEditing(editing === name ? null : name); }}>Add or replace key</button>}
+          </span>
+        </div>
+        {editing === name && <form className="mt-2 flex flex-wrap gap-2" onSubmit={(e) => { e.preventDefault(); void saveKey(name); }}>
+          <input aria-label={`${label} API key`} type="password" autoComplete="off" className={`${INPUT} mt-0 max-w-md`} value={key} onChange={(e) => setKey(e.target.value)} placeholder="Paste API key" />
+          <button className={PRIMARY} disabled={!key.trim() || busy !== null}>{busy === name ? "Verifying…" : "Verify and save"}</button>
+          <button type="button" className={SECONDARY} onClick={() => { setKey(""); setEditing(null); }}>Cancel</button>
+        </form>}
+        {messages[name] && <p role="status" className="mt-1 text-xs text-ink-2">{messages[name]}</p>}
+      </li>)}
+    </ul>
+    {!data.credential_storage && <p className="mt-2 text-xs text-ink-2">To manage AI keys here, the server administrator must configure credential encryption. Existing server keys continue to work.</p>}
+    <p className="mt-2 text-xs text-ink-2">Instagram, Telegram and storage credentials are configured on the server. Pair Telegram below. Select your AI models and save them below.</p>
+  </section>;
 }
 
 interface SectionProps { data: SettingsData; save: (patch: Partial<Record<Section, unknown>>) => Promise<void> }
@@ -222,7 +281,12 @@ function Models({ data, save }: SectionProps) {
   const set = (k: "partner" | "editor" | "maker" | "pick") => (v: ModelChoice) => setLlm({ ...llm, [k]: v });
   return (
     <Panel title="Models" section="llm" data={data} save={save} patch={() => llm}
-           note="Choose an OpenAI or Claude model for each agent. Set the matching API key on the server. The monthly ceiling stops agents when reached.">
+           note="Choose an OpenAI or Claude model for each agent. Configure the matching API key under Connections. The monthly ceiling stops agents when reached.">
+      <p className="text-xs text-ink-2">Partner develops ideas, Maker creates drafts, Editor reviews them, and Picker selects images. Changes take effect when you save.</p>
+      <button type="button" className={SECONDARY} onClick={() => {
+        const model = data.choices.models.find((m) => m.startsWith("gpt-"));
+        if (model) setLlm({ ...llm, partner: { ...llm.partner, model }, editor: { ...llm.editor, model }, maker: { ...llm.maker, model }, pick: { ...llm.pick, model } });
+      }}>Use OpenAI for all agents</button>
       <ModelRow label="Partner" value={llm.partner} data={data} onChange={set("partner")} />
       <ModelRow label="Editor" value={llm.editor} data={data} onChange={set("editor")} />
       <ModelRow label="Maker" value={llm.maker} data={data} onChange={set("maker")} />

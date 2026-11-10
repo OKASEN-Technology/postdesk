@@ -73,6 +73,7 @@ export default function Preview({ config }: { config: Config }) {
       </div>
     </article>
     {concept && <section className="mt-5 rounded-lg border border-line bg-paper px-4 py-4"><h2 className="text-sm font-semibold">The idea</h2><p className="mt-2 whitespace-pre-wrap break-words text-sm leading-relaxed text-ink-2">{card.brief_md || card.body_md || card.title}</p></section>}
+    <Link to={`/cards/${card.id}`} className="mt-5 inline-block text-sm font-medium text-moss hover:underline">Return to the idea to approve it or request changes →</Link>
     <p className="mt-4 text-xs leading-relaxed text-ink-3">This is a private Postdesk preview. Opening it does not publish or approve anything.</p>
   </div>;
 }
