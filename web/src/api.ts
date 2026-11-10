@@ -169,6 +169,9 @@ export const api = {
   updatePost: (id: string, body: { title?: string; caption?: string; alt_texts?: string[]; slides?: SlidePatch[] }) =>
     call<Post>(`/api/posts/${id}`, json("PATCH", body)),
   approve: (id: string, publish_at: string, crosspost_x = false) => call<Post>(`/api/posts/${id}/approve`, json("POST", { publish_at, crosspost_x })),
+  facebookConnection: () => call<{configured: boolean; credential_storage: boolean}>("/api/connections/facebook"),
+  saveFacebookConnection: (credentials: {page_id: string; page_token: string}) => call<{account: {name: string; id: string}}>("/api/connections/facebook", json("PUT", credentials)),
+  verifyFacebookConnection: () => call<{account: {name: string; id: string}}>("/api/connections/facebook/verify", json("POST")),
   xConnection: () => call<{configured: boolean; credential_storage: boolean}>("/api/connections/x"),
   saveXConnection: (credentials: {api_key: string; api_secret: string; access_token: string; access_secret: string}) => call<{account: {username: string; id: string}}>("/api/connections/x", json("PUT", credentials)),
   verifyXConnection: () => call<{account: {username: string; id: string}}>("/api/connections/x/verify", json("POST")),

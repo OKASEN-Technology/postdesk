@@ -112,8 +112,12 @@ def cfg(monkeypatch, tmp_path: Path):
     for k in ("telegram_bot_token", "slack_webhook_url", "notify_webhook_url", "smtp_host", "smtp_user",
               "smtp_password", "smtp_from", "resend_api_key"):
         monkeypatch.setattr(settings, k, None)
+    from postdesk.facebook import credentials as facebook_credentials
     from postdesk.instagram import publish
 
+    # Scheduling tests operate with a connected Page; tests for the unconnected
+    # flow explicitly override this fixture.
+    monkeypatch.setattr(facebook_credentials, "read", lambda _: {"page_id": "123", "page_token": "PAGE"})
     monkeypatch.setattr(publish, "POLL_INTERVAL_S", 0)
     # The settings screen's overrides change the config in place: put it back.
     saved = {k: copy.deepcopy(getattr(config, k)) for k in config_mod.EDITABLE}
@@ -152,6 +156,8 @@ class FakeGraph:
                  "instagram_business_account": {"id": "IG1", "username": self.username}},
             ]})
         assert params.get("access_token") == "PAGE", path
+        if path in ("123/photos", "123/feed", "123/photo_stories"):
+            return httpx.Response(200, json={"id": "FB1"})
         if path == "IG1/media":
             self.created.append(params)
             self.n += 1

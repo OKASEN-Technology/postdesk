@@ -143,8 +143,8 @@ def update_post(
     (M1)."""
     post = _get(session, post_id, lock=True)
     _require(post, "draft")
-    if post.channel == "x":
-        raise QueueError("An X copy cannot be edited separately from its Instagram post.")
+    if post.channel in ("x", "facebook"):
+        raise QueueError("A platform copy cannot be edited separately from its Instagram post.")
     slides = list(post.slides)
     for i, (asset_id, spec) in (rendered or {}).items():
         if not 0 <= i < len(slides):
@@ -203,6 +203,35 @@ def approve(session: Session, post_id: uuid.UUID, *, publish_at: datetime, appro
                 raise QueueError("Connect X in Settings before scheduling to both platforms.")
         except ValueError as exc:
             raise QueueError(str(exc)) from exc
+    facebook_enabled = False
+    if post.channel == "instagram":
+        from postdesk.facebook import credentials as fb_credentials
+        try:
+            facebook_enabled = fb_credentials.read(session) is not None
+        except ValueError as exc:
+            raise QueueError(str(exc)) from exc
+        if not facebook_enabled:
+            raise QueueError("Connect Facebook in Settings before scheduling. "
+                             "Instagram and Facebook are always posted together.")
+        from postdesk.facebook.publisher import validate_post as validate_facebook
+        validate_facebook(session, post)
+        existing_fb = session.scalars(select(SocialPost).where(
+            SocialPost.channel == "facebook",
+            SocialPost.status.in_(("approved", "publishing", "published", "failed", "draft")),
+            SocialPost.media["instagram_post_id"].as_string() == str(post.id)).with_for_update()).first()
+        if existing_fb:
+            raise QueueError("A Facebook copy already exists. Check its status before scheduling again.")
+    if post.channel == "facebook":
+        from postdesk.facebook import credentials as fb_credentials
+        from postdesk.facebook.publisher import validate_post as validate_facebook
+        validate_facebook(session, post)
+        if not fb_credentials.read(session):
+            raise QueueError("Connect Facebook in Settings before scheduling.")
+        source_id = (post.media or {}).get("instagram_post_id")
+        source = session.get(SocialPost, uuid.UUID(source_id)) if source_id else None
+        if (source is None or source.status != "published" or source.caption != post.caption
+                or source.slides != post.slides):
+            raise QueueError("Facebook retries require the matching Instagram post to have been published.")
     now = now_utc()
     post.status = "approved"
     post.publish_at = publish_at
@@ -212,6 +241,12 @@ def approve(session: Session, post_id: uuid.UUID, *, publish_at: datetime, appro
     post.updated_at = now
     if crosspost_x:
         session.add(SocialPost(channel="x", kind=post.kind, status="approved", title=post.title,
+                               caption=post.caption, slides=post.slides, card_id=post.card_id,
+                               source_ref=post.source_ref, media={"instagram_post_id": str(post.id)},
+                               publish_at=publish_at, approved_by=approved_by.strip(), approved_at=now,
+                               created_by=post.created_by, created_at=now, updated_at=now))
+    if facebook_enabled:
+        session.add(SocialPost(channel="facebook", kind=post.kind, status="approved", title=post.title,
                                caption=post.caption, slides=post.slides, card_id=post.card_id,
                                source_ref=post.source_ref, media={"instagram_post_id": str(post.id)},
                                publish_at=publish_at, approved_by=approved_by.strip(), approved_at=now,
@@ -228,16 +263,25 @@ def _cancel_x_copy(session: Session, post: SocialPost) -> None:
     if post.channel == "instagram":
         # Cancel any unsent X copy under the same transaction and row lock.
         mirrors = session.scalars(select(SocialPost).where(
-            SocialPost.channel == "x", SocialPost.status == "approved",
+            SocialPost.channel.in_(("x", "facebook")), SocialPost.status == "approved",
             SocialPost.media["instagram_post_id"].as_string() == str(post.id)).with_for_update()).all()
         for mirror in mirrors:
             mirror.status = "rejected"
             mirror.updated_at = now_utc()
 
 
+def _require_paired_cancellation(session: Session, post: SocialPost) -> None:
+    if post.channel == "facebook":
+        source_id = (post.media or {}).get("instagram_post_id")
+        source = session.get(SocialPost, uuid.UUID(source_id)) if source_id else None
+        if source and source.status in ("approved", "publishing"):
+            raise QueueError("Unschedule the Instagram post to cancel both Instagram and Facebook.")
+
+
 def unapprove(session: Session, post_id: uuid.UUID) -> SocialPost:
     post = _get(session, post_id, lock=True)
     _require(post, "approved")
+    _require_paired_cancellation(session, post)
     _cancel_x_copy(session, post)
     post.status = "draft"
     post.approved_by = post.approved_at = None
@@ -250,6 +294,7 @@ def unapprove(session: Session, post_id: uuid.UUID) -> SocialPost:
 def reject(session: Session, post_id: uuid.UUID) -> SocialPost:
     post = _get(session, post_id, lock=True)
     _require(post, "draft", "approved", "failed")
+    _require_paired_cancellation(session, post)
     _cancel_x_copy(session, post)
     post.status = "rejected"
     post.updated_at = now_utc()
@@ -315,6 +360,17 @@ def publish_due(session: Session, graph: ig.Graph, *, now: datetime | None = Non
         attempted.append(post)
         log(f"{post.title} ({post.kind}, {post.id})")
         try:
+            from postdesk.facebook import credentials as fb_credentials
+            mirror = session.scalars(select(SocialPost).where(
+                SocialPost.channel == "facebook", SocialPost.status == "approved",
+                SocialPost.media["instagram_post_id"].as_string() == str(post.id))).first()
+            try:
+                facebook_configured = fb_credentials.read(session) is not None
+            except ValueError as exc:
+                raise ig.InstagramError(str(exc)) from exc
+            if not facebook_configured or mirror is None:
+                raise ig.InstagramError("Instagram and Facebook must be scheduled together. "
+                                        "Connect Facebook and reschedule this post.")
             items = []
             for s in post.slides:
                 asset = session.get(ContentAsset, uuid.UUID(s["asset_id"]))
@@ -324,6 +380,7 @@ def publish_due(session: Session, graph: ig.Graph, *, now: datetime | None = Non
             ig.check_public(items[0][0])
             result = ig.publish_hosted(post.kind, items, post.caption, graph, account, log=log)
         except ig.InstagramError as e:
+            _cancel_x_copy(session, post)
             post.status = "failed"
             post.error = str(e)
             log(f"  failed: {e}")

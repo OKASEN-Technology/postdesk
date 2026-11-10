@@ -253,7 +253,8 @@ export default function PostEditor({ config }: { config: Config }) {
               <ErrorNote text={error} />
               {schedulable && (
                 <>
-                  {post.channel === "x" && <p className="text-xs text-ink-2">This copy keeps the same content as its Instagram post.</p>}
+                  {post.channel !== "instagram" && <p className="text-xs text-ink-2">This copy keeps the same content as its Instagram post.</p>}
+                  {post.channel === "instagram" && <p className="text-sm text-ink-2">Instagram and Facebook are scheduled together. <Link to="/settings" className="text-moss underline">Facebook settings</Link></p>}
                   <label className="block text-xs text-ink-2">
                     Publish at ({tz})
                     {post.publish_at && publishAt === toLocalInput(post.publish_at, tz) && " · recommended"}
@@ -291,7 +292,7 @@ export default function PostEditor({ config }: { config: Config }) {
                 <>
                   <p className="text-sm text-ink-2">
                     Publishing started {fmt(post.updated_at, tz)}. If that is more than an hour ago, check the account on
-                    {post.channel === "x" ? "X" : "Instagram"} first: send it back to draft only if it never went out, or you will post it twice.
+                    {post.channel === "x" ? "X" : post.channel === "facebook" ? "Facebook" : "Instagram"} first: send it back to draft only if it never went out, or you will post it twice.
                   </p>
                   <button type="button" disabled={busy} onClick={() => run(() => api.action(post.id, "back-to-draft"))} className={SECONDARY}>Back to draft</button>
                 </>
@@ -315,7 +316,7 @@ export default function PostEditor({ config }: { config: Config }) {
               {post.published_at && (
                 <li>
                   Published {fmt(post.published_at, tz)}
-                  {post.permalink && <> · <a href={post.permalink} target="_blank" rel="noreferrer" className="text-moss hover:underline">View on {post.channel === "x" ? "X" : "Instagram"}</a></>}
+                  {post.permalink && <> · <a href={post.permalink} target="_blank" rel="noreferrer" className="text-moss hover:underline">View on {post.channel === "x" ? "X" : post.channel === "facebook" ? "Facebook" : "Instagram"}</a></>}
                 </li>
               )}
               {post.status === "rejected" && <li>Rejected {fmt(post.updated_at, tz)}</li>}

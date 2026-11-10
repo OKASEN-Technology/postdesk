@@ -30,6 +30,7 @@ export default function Settings({ onChange }: { config: Config; onChange?: () =
         AI keys can be saved securely below; other service credentials are managed by the server administrator.
       </p>
       <ConnectionsPanel />
+      <FacebookConnection />
       <XConnection />
       <div className="mt-6 grid gap-6 lg:grid-cols-2">
         <div className="space-y-6">
@@ -616,6 +617,47 @@ function XConnection() {
     {editing && <form className="mt-3 space-y-2" onSubmit={(e) => { e.preventDefault(); void save(); }}>
       {([ ["api_key", "API key"], ["api_secret", "API key secret"], ["access_token", "Access token"], ["access_secret", "Access token secret"] ] as const).map(([key, label]) => <label className="block text-xs text-ink-2" key={key}>{label}<input type="password" autoComplete="off" required value={values[key]} className={INPUT} onChange={(e) => setValues({...values, [key]: e.target.value})} /></label>)}
       <button className={PRIMARY} disabled={busy}>{busy ? "Verifying…" : "Verify and save"}</button>
+    </form>}
+    {message && <p role="status" className="mt-2 text-sm text-ink-2">{message}</p>}
+  </section>;
+}
+
+
+function FacebookConnection() {
+  const [values, setValues] = useState({page_id: "", page_token: ""});
+  const [status, setStatus] = useState<{configured: boolean; credential_storage: boolean} | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const load = () => api.facebookConnection().then(setStatus).catch((e) => setMessage(errorText(e)));
+  useEffect(() => { void load(); }, []);
+  async function save() {
+    setBusy(true); setMessage("");
+    try {
+      const result = await api.saveFacebookConnection(values);
+      setValues({page_id: "", page_token: ""}); setEditing(false);
+      setMessage(`Connected to ${result.account.name}. New Instagram posts will also be sent to this Page.`);
+      await load();
+    } catch (e) { setMessage(errorText(e)); } finally { setBusy(false); }
+  }
+  async function verify() {
+    setBusy(true); setMessage("");
+    try { const result = await api.verifyFacebookConnection(); setMessage(`Page token belongs to ${result.account.name}.`); }
+    catch (e) { setMessage(errorText(e)); } finally { setBusy(false); }
+  }
+  return <section className={`${CARD} mt-6`}>
+    <h2 className="text-base font-semibold">Facebook Page</h2>
+    <p className="mt-1 text-sm text-ink-2">Once connected, every new Instagram image, carousel, and photo Story is also sent to this Page. X stays optional. Reels cannot be scheduled until Facebook Reel publishing is supported.</p>
+    {status && <p className="mt-2 text-sm">{status.configured ? "Connected · automatic sharing on" : "Not connected · scheduling Instagram is paused until Facebook is connected"}{!status.credential_storage && " · Credential encryption must be configured on the server."}</p>}
+    <p className="mt-1 text-xs text-ink-2">Use a Page token with pages_manage_posts and pages_read_engagement. Verifying identifies the Page; Meta checks publishing permissions when a post is sent.</p>
+    <div className="mt-3 flex gap-2">
+      <button type="button" className={SECONDARY} disabled={busy || !status?.credential_storage} onClick={() => { setEditing(!editing); setValues({page_id: "", page_token: ""}); }}>{editing ? "Cancel" : status?.configured ? "Replace credentials" : "Connect Facebook"}</button>
+      {status?.configured && <button type="button" className={SECONDARY} disabled={busy} onClick={() => void verify()}>Verify Page</button>}
+    </div>
+    {editing && <form className="mt-3 space-y-2" onSubmit={(e) => { e.preventDefault(); void save(); }}>
+      <label className="block text-xs text-ink-2">Page ID<input required value={values.page_id} className={INPUT} onChange={(e) => setValues({...values, page_id: e.target.value})} /></label>
+      <label className="block text-xs text-ink-2">Page access token<input type="password" autoComplete="off" required value={values.page_token} className={INPUT} onChange={(e) => setValues({...values, page_token: e.target.value})} /></label>
+      <button className={PRIMARY} disabled={busy}>{busy ? "Checking…" : "Connect Page"}</button>
     </form>}
     {message && <p role="status" className="mt-2 text-sm text-ink-2">{message}</p>}
   </section>;

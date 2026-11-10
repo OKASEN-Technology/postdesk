@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Pair Postdesk Instagram image, carousel, and photo Story schedules with the
+  connected Facebook Page automatically; X remains optional. Existing Instagram
+  schedules without a paired Facebook post must be rescheduled after connecting
+  the Page. Reels are blocked until Facebook Reel support is available. Posts
+  created directly in Instagram are outside Postdesk's scheduler.
+- Store Facebook Page credentials encrypted, report each platform's delivery
+  separately, and require manual verification before retrying an ambiguous post.
+
 ### M3, Telegram, images and settings
 
 - **The Telegram bot.** Pair a chat with `/start` and the code it gives

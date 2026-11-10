@@ -80,11 +80,9 @@ def test_reel_requires_video_and_approval_before_publishing(session):
     assert post not in queue.due(session)
     with pytest.raises(queue.QueueError, match="cross-posting"):
         queue.approve(session, post.id, publish_at=when, approved_by="admin", crosspost_x=True)
-    queue.approve(session, post.id, publish_at=when, approved_by="admin")
-    fake = FakeGraph()
-    queue.publish_due(session, graph_for(fake), log=lambda *_: None)
-    assert post.status == "published"
-    assert any(p.get("media_type") == "REELS" for m, path, p in fake.calls if m == "POST")
+    with pytest.raises(queue.QueueError, match="Facebook Reel publishing is not yet supported"):
+        queue.approve(session, post.id, publish_at=when, approved_by="admin")
+    assert post.status == "draft"
 
 
 def test_publish_due_posts_only_due_approved(session):

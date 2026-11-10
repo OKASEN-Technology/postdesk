@@ -45,8 +45,8 @@ caption, to offer it a picture.
 /review: show the held post and its review
 /go: approve the brief
 /rethink &lt;note&gt;: back to the partner (or the maker) with a note
-/schedule [time]: schedule on Instagram
-/schedule_both [time]: schedule the same post on Instagram and X
+/schedule [time]: schedule on Instagram and Facebook
+/schedule_both [time]: schedule the same post on Instagram, Facebook, and X
 /unschedule: pull a scheduled post back
 /hold [why], /drop: hold it, or take it off the board
 /pause, /resume: stop or start the scout and the agents"""
@@ -270,7 +270,7 @@ def free_text(session: Session, bot: Bot, chat_id: str, msg: dict, text: str, ac
         transitions.send_to_review(session, card, actor=actor,
                                    note="Shared Instagram and X caption edited in Telegram; review the updated draft.")
         say(session, bot, chat_id, f"Caption updated on <b>{esc(card.title)}</b> and sent to the editor. "
-            "Nothing is scheduled; choose both platforms after review.", card=card)
+            "Nothing is scheduled; choose whether to include X after review.", card=card)
     else:
         asked = actions.comment(session, card, text)
         say(session, bot, chat_id, f"Noted on <b>{esc(card.title)}</b>."
@@ -402,7 +402,7 @@ def do_schedule(session: Session, bot: Bot, chat_id: str, card: Card, when_text:
             parsed = parse_tweet(feed[0].caption)
             if not parsed.valid and feed[0].caption:
                 ask(session, bot, chat_id, f"Nothing was scheduled. This caption counts as {parsed.weightedLength} "
-                    "characters on X; the limit is 280. Reply with a replacement caption for both platforms. "
+                    "characters on X; the limit is 280. Reply with a replacement caption for all platforms. "
                     "It will go back to the editor for review before you schedule it.", card, "edit_shared_caption")
                 return
     transitions.schedule(session, card, actor=actor, when=when, crosspost_x=both)
@@ -450,8 +450,12 @@ def button(session: Session, bot: Bot, chat_id: str, cb: dict, actor: str, deps:
             do_schedule(session, bot, chat_id, card, "", actor, both=True)
         elif action in ("pk", "bt"):
             drafts = posts.drafts(session, card.id)
-            retry_x = bool(drafts) and all(p.channel == "x" for p in drafts)
-            platforms = "Instagram and X" if action == "bt" else ("X" if retry_x else "Instagram")
+            retry_only = bool(drafts) and all(p.channel in ("x", "facebook") for p in drafts)
+            retry_x = retry_only and any(p.channel == "x" for p in drafts)
+            retry_facebook = retry_only and any(p.channel == "facebook" for p in drafts)
+            base = "Instagram and Facebook"
+            platforms = ("Facebook and X" if retry_x and retry_facebook else "X" if retry_x else
+                         "Facebook" if retry_facebook else f"{base} and X" if action == "bt" else base)
             ask(session, bot, chat_id, f"When should <b>{esc(card.title)}</b> go out on {platforms}? "
                 "Reply with a time: "
                 "<i>tomorrow 18:00</i>, <i>fri 7:30</i>, or 2031-03-07T18:00.", card,
@@ -471,10 +475,13 @@ def button(session: Session, bot: Bot, chat_id: str, cb: dict, actor: str, deps:
                 buttons=render.hold_buttons(session, card))
         elif action == "bd":
             transitions.retry(session, card, actor=actor)
+            draft_rows = posts.drafts(session, card.id)
+            retry_only = bool(draft_rows) and all(p.channel in ("x", "facebook") for p in draft_rows)
             say(session, bot, chat_id, f"Back to draft: <b>{esc(card.title)}</b>. Check the account first, then "
                 "schedule it again.", card=card,
                 buttons=render.schedule_buttons(card, render.when(posts.recommended_time(session, card)),
-                                                retry_x=all(p.channel == "x" for p in posts.drafts(session, card.id))))
+                    retry_x=retry_only and any(p.channel == "x" for p in draft_rows),
+                    retry_facebook=retry_only and any(p.channel == "facebook" for p in draft_rows)))
         elif action == "rv":
             transitions.send_to_review(session, card, actor=actor, note="sent to the editor from Telegram")
             say(session, bot, chat_id, f"Sent to the editor: <b>{esc(card.title)}</b>.", card=card)
