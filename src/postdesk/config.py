@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=os.environ.get("POSTDESK_ENV_FILE", ".env"), extra="ignore")
 
     anthropic_api_key: str | None = None
+    openai_api_key: str | None = None
     telegram_bot_token: str | None = None
 
     meta_app_id: str | None = None
@@ -59,6 +60,7 @@ class Settings(BaseSettings):
     renderer_url: str | None = None
     renderer_token: str | None = None
 
+    postdesk_credentials_key: str | None = None
     postdesk_admin_password: str | None = None
     postdesk_secret_key: str | None = None
     # A bearer token for scripts and for `postdesk` run on another machine;

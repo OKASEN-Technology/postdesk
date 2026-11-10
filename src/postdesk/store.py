@@ -50,6 +50,9 @@ def refresh_config(session: Session, *, log=None) -> bool:
     """Lay the stored overrides over postdesk.toml if they changed since the
     last time (the web process and a separate worker each call this).
     True if something was applied."""
+    from postdesk import credentials
+
+    credentials.refresh(session)
     stored = overrides(session)
     if stored == config_mod.applied_overrides():
         return False

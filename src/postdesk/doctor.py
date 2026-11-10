@@ -30,6 +30,15 @@ class Check:
 
 
 def check_claude_key() -> Check:
+    selected = [config.llm.partner.model, config.llm.editor.model, config.llm.maker.model, config.llm.pick.model]
+    if all(m.startswith(("gpt-", "o1", "o3", "o4")) for m in selected):
+        if settings.openai_api_key:
+            return Check("OpenAI key", True, "OPENAI_API_KEY is set (not called)")
+        return Check("OpenAI key", False, "OPENAI_API_KEY is empty",
+                     "Add an OpenAI API key to the server environment.", warn=True)
+    if any(m.startswith(("gpt-", "o1", "o3", "o4")) for m in selected) and not settings.openai_api_key:
+        return Check("OpenAI key", False, "OPENAI_API_KEY is empty",
+                     "Add an OpenAI API key for the selected OpenAI models.", warn=True)
     if settings.anthropic_api_key:
         return Check("Claude key", True, "ANTHROPIC_API_KEY is set (not called)")
     return Check("Claude key", False, "ANTHROPIC_API_KEY is empty",

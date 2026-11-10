@@ -106,7 +106,8 @@ class FakeTelegram:
 
     def buttons(self, params: dict) -> list[str]:
         markup = params.get("reply_markup") or {}
-        return [b["callback_data"].split(":")[0] for row in markup.get("inline_keyboard") or [] for b in row]
+        return [b["callback_data"].split(":")[0] for row in markup.get("inline_keyboard") or [] for b in row
+                if "callback_data" in b]
 
     def clear(self) -> None:
         self.calls.clear()

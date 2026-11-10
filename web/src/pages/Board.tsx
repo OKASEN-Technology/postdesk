@@ -158,7 +158,7 @@ export default function Board({ config }: { config: Config }) {
         <h1 className="text-2xl font-semibold tracking-tight">Board</h1>
         {runs && (
           <span className="text-xs text-ink-3">
-            Claude this month: ${runs.month_usd.toFixed(2)} of ${runs.ceiling_usd.toFixed(2)}
+            AI usage this month: ${runs.month_usd.toFixed(2)} of ${runs.ceiling_usd.toFixed(2)}
           </span>
         )}
       </div>
@@ -193,6 +193,13 @@ export default function Board({ config }: { config: Config }) {
           })}
         </div>
         <aside className="w-full shrink-0 space-y-3 lg:w-72">
+          <section className="rounded-lg border border-line bg-white p-3">
+            <h2 className="text-sm font-semibold">Needs your attention</h2>
+            <ul className="mt-2 space-y-2 text-sm">
+              {(cards ?? []).filter((c) => ["Brief ready", "Awaiting approval", "On hold"].includes(c.column)).map((c) => <li key={c.id}><Link className="text-moss hover:underline" to={`/cards/${c.id}`}>{c.title}</Link><span className="block text-xs text-ink-2">{c.column}{c.stuck_reason ? ` · ${c.stuck_reason}` : ""}</span></li>)}
+            </ul>
+            {cards && !cards.some((c) => ["Brief ready", "Awaiting approval", "On hold"].includes(c.column)) && <p className="mt-2 text-xs text-ink-2">Nothing is waiting for your review.</p>}
+          </section>
           <NewCard onFiled={load} />
           <Sources onScanned={load} />
           <p className="text-xs text-ink-3">

@@ -75,7 +75,8 @@ def get_settings(session: Session = Depends(get_session)) -> dict:
         "values": _values(),
         "overridden": overridden,
         "config_path": str(config.path) if config.path else None,
-        "choices": {"models": sorted(llm.PRICES), "efforts": EFFORTS, "image_sources": sorted(images.available()),
+        "choices": {"models": sorted([*llm.PRICES, *llm.OPENAI_PRICES]), "efforts": EFFORTS,
+                    "image_sources": sorted(images.available()),
                     "source_types": sorted(available()), "templates": sorted(plans.available())},
         "telegram": _telegram(session),
         "spend": {"month_usd": round(s.month_usd, 4), "ceiling_usd": s.ceiling_usd, "over": s.over},
@@ -211,3 +212,67 @@ def revoke_permission(permission_id: uuid.UUID, session: Session = Depends(get_s
         return permission_out(rights.revoke(session, permission_id))
     except LookupError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
+
+# Connection checks do not expose credentials. Configured means present, not verified.
+@router.get("/connections")
+def connections(session: Session = Depends(get_session)) -> dict:
+    store.refresh_config(session)
+    selected = [config.llm.partner.model, config.llm.editor.model, config.llm.maker.model, config.llm.pick.model]
+    openai_selected = any(m.startswith(("gpt-", "o1", "o3", "o4")) for m in selected)
+    claude_selected = any(not m.startswith(("gpt-", "o1", "o3", "o4")) for m in selected)
+    return {
+        "openai": {"configured": bool(settings.openai_api_key), "selected": openai_selected},
+        "anthropic": {"configured": bool(settings.anthropic_api_key), "selected": claude_selected},
+        "instagram": {"configured": bool(settings.instagram_access_token or
+                                          (settings.instagram_page_token and settings.instagram_user_id))},
+        "telegram": {"configured": bool(settings.telegram_bot_token), "paired": bool(pairing.linked(session))},
+        "storage": {"configured": bool(settings.s3_enabled() or settings.public_base_url),
+                    "kind": "S3" if settings.s3_enabled() else "local"},
+        "renderer": {"configured": bool(settings.renderer_url)},
+        "credential_storage": bool(settings.postdesk_credentials_key),
+    }
+
+
+@router.post("/connections/{name}/test")
+def test_connection(name: str, session: Session = Depends(get_session)) -> dict:
+    from postdesk import credentials, doctor
+
+    store.refresh_config(session)
+    if name in credentials.FIELDS:
+        key = getattr(settings, credentials.FIELDS[name])
+        if not key:
+            raise HTTPException(status_code=409, detail="No API key is configured for this provider.")
+        try:
+            credentials.validate(name, key)
+        except ValueError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return {"ok": True, "detail": "The provider accepted the key. Model access and billing are not checked."}
+    checks = {"instagram": doctor.check_instagram, "storage": doctor.check_storage,
+              "renderer": doctor.check_renderer, "telegram": doctor.check_telegram}
+    if name not in checks:
+        raise HTTPException(status_code=404, detail="Unknown connection.")
+    try:
+        result = checks[name]()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="The connection test failed. Check the service configuration.") \
+            from exc
+    # Exception details can include credentials or signed URLs; do not return them.
+    if not result.ok:
+        return {"ok": False, "detail": "Test failed. Check this service's configuration and try again."}
+    if name == "instagram":
+        return {"ok": True, "detail": result.detail}
+    return {"ok": True, "detail": "Test passed."}
+
+
+@router.put("/connections/{name}/key")
+def save_connection_key(name: str, body: dict, session: Session = Depends(get_session)) -> dict:
+    from postdesk import credentials
+
+    key = body.get("key")
+    if not isinstance(key, str):
+        raise HTTPException(status_code=400, detail="Enter an API key.")
+    try:
+        credentials.save(session, name, key.strip())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True}

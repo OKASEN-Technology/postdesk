@@ -57,6 +57,12 @@ PRICES: dict[str, tuple[float, float]] = {
     "claude-sonnet-5": (3.0, 15.0),
     "claude-fable-5-1": (4.0, 20.0),
 }
+# Standard API prices per million tokens (input, output, cached input).
+OPENAI_PRICES = {
+    "gpt-6.1-sol": (2.0, 10.0, 0.10),
+    "gpt-6.1-terra": (1.0, 5.0, 0.05),
+    "gpt-6-luna": (0.10, 0.50, 0.01),
+}
 CACHE_WRITE = 1.25
 CACHE_READ = 0.1
 MAX_TOKENS = 16000
@@ -234,6 +240,11 @@ def structured_call(
     run = AgentRun(agent=agent, post_id=post_id, card_id=card_id, ref=ref, model=model, effort=effort,
                    started_at=datetime.now(UTC), status="failed", input_tokens=0, output_tokens=0,
                    cache_read_tokens=0, cache_write_tokens=0)
+    if model.startswith(("gpt-", "o1", "o3", "o4")):
+        from postdesk.openai_llm import structured_openai
+        return structured_openai(agent=agent, system=system, messages=messages, schema=schema, model=model,
+                                 effort=effort, max_tokens=max_tokens, tools=tools, session=session,
+                                 run=run, client=client)
     client = client or _client()
     kwargs = {
         "model": model,

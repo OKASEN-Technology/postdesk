@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { api, errorText, type CardDetail, type Config } from "../api";
+import { api, errorText, type CardDetail, type Config, type Connections } from "../api";
 import { fmt, fromLocalInput, toLocalInput } from "../time";
 import { Badge, CARD, DANGER, ErrorNote, INPUT, LABEL, PRIMARY, SECONDARY } from "../ui";
 
@@ -31,6 +31,9 @@ function Actions({ card, config, onDone }: { card: CardDetail; config: Config; o
   const navigate = useNavigate();
   const tz = config.timezone;
   const [note, setNote] = useState("");
+  const [connections, setConnections] = useState<Connections | null>(null);
+  const [connectionError, setConnectionError] = useState(false);
+  useEffect(() => { api.connections().then(setConnections).catch(() => setConnectionError(true)); }, []);
   const [when, setWhen] = useState(card.recommended_at ? toLocalInput(card.recommended_at, tz) : "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -55,6 +58,8 @@ function Actions({ card, config, onDone }: { card: CardDetail; config: Config; o
     <div className="space-y-3">
       {col === "Awaiting approval" && (
         <div className="space-y-2 rounded border border-moss bg-moss-2 p-3">
+          <p className="text-sm font-medium">Publishing readiness</p>
+          <p className="text-xs text-ink-2">{connectionError ? "Could not check configuration." : !connections ? "Checking configuration…" : !connections.instagram.configured ? "Instagram credentials are missing." : !connections.storage.configured ? "Image storage is not configured." : "Instagram and image storage are configured. Test them in Settings to verify they work."} <Link to="/settings" className="text-moss underline">Open settings</Link></p>
           <label className={LABEL} htmlFor="when">Publish at ({tz})</label>
           <input id="when" type="datetime-local" className={INPUT} value={when} onChange={(e) => setWhen(e.target.value)} />
           <p className="text-xs text-ink-2">
@@ -203,6 +208,7 @@ export default function Card({ config }: { config: Config }) {
         <span className="rounded bg-paper-2 px-2 py-0.5 text-xs font-medium text-ink-2">{card.closed ? "Closed" : card.column}</span>
         {card.busy && <span className="text-xs text-sun">{card.busy}…</span>}
       </div>
+      <Link to={`/cards/${card.id}/preview`} className="mt-3 inline-block text-sm font-medium text-moss hover:underline">Preview Instagram post →</Link>
       {card.stuck_reason && card.column === "On hold" && (
         <p className="mt-2 rounded bg-clay-2 p-2 text-sm text-clay">On hold: {card.stuck_reason}</p>
       )}
@@ -332,9 +338,15 @@ export default function Card({ config }: { config: Config }) {
                   <span className="font-mono">{r.cost_usd != null ? `$${r.cost_usd.toFixed(3)}` : "—"}</span>
                 </li>
               ))}
-              {card.runs.length === 0 && <li>No Claude calls yet.</li>}
+              {card.runs.length === 0 && <li>No AI calls yet.</li>}
             </ul>
           </Section>
+
+          {card.jobs.some((j) => j.status === "failed") && <Section title="Activity and recovery">
+            <ul className="space-y-2 text-xs text-ink-2">{card.jobs.filter((j) => j.status === "failed").map((j) => <li key={j.id}><b>{j.kind}</b> failed after {j.attempts} attempt(s). {j.error || "Check the connection and settings."}</li>)}</ul>
+            {((card.column === "Planned" || card.column === "Brief ready") || card.column === "Approved" || card.column === "In review") && <button type="button" className={`${SECONDARY} mt-3`} disabled={!!card.busy} onClick={() => { const agent = card.column === "Approved" ? "make" : card.column === "In review" ? "review" : "partner"; api.turn(card.id, agent).then(setCard).catch((e) => setError(errorText(e))); }}>Try this step again</button>}
+            <p className="mt-2 text-xs text-ink-2">Check the error and fix the cause before retrying.</p>
+          </Section>}
 
           <Section title="Moves">
             <ol className="space-y-1 text-xs">
