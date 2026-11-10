@@ -89,6 +89,7 @@ class PostUpdate(BaseModel):
 
 
 class PostApprove(BaseModel):
+    crosspost_x: bool = False
     publish_at: datetime
     approved_by: str = "admin"
 

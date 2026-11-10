@@ -353,3 +353,21 @@ worker instance. UI keys are verified before saving, encrypted in the database,
 and override environment keys. Losing or changing the encryption key makes saved
 credentials unreadable. Never put that key in the database or commit it to Git.
 Key verification confirms provider authentication, not model access or billing.
+
+
+### Posting to X as well as Instagram
+
+Connect the X account under Settings → X connection using the developer app's
+API key, API key secret, user access token and access token secret. The app
+must have permission to post and X API access and credits. Credentials are
+verified before saving and encrypted with `POSTDESK_CREDENTIALS_KEY`; use the
+same stable key on every web and worker instance.
+
+Open an Instagram image draft in the web queue and select **Also post to X**
+when approving it. Card-level and Telegram scheduling continue to schedule
+Instagram only. The same caption and images go to both, subject to the X
+weighted 280-character limit, four images and 5 MB per image. Instagram alt
+text is not sent to X. Check each platform's result in the queue. If X reports
+an uncertain result, check the account before retrying to avoid duplicates.
+X API calls may incur charges. X integration must be verified against the
+account and access tier before relying on it.

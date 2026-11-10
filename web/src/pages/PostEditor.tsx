@@ -70,6 +70,7 @@ export default function PostEditor({ config }: { config: Config }) {
   const [words, setWords] = useState<(Record<string, string> | null)[]>([]);
   const [slide, setSlide] = useState(0);
   const [publishAt, setPublishAt] = useState("");
+  const [crosspostX, setCrosspostX] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -102,7 +103,8 @@ export default function PostEditor({ config }: { config: Config }) {
   if (error && !post) return <ErrorNote text={error} />;
   if (!post) return <p className="text-sm text-ink-3">Loading…</p>;
 
-  const editable = post.status === "draft";
+  const editable = post.status === "draft" && post.channel !== "x";
+  const schedulable = post.status === "draft";
   const wordPatches: SlidePatch[] = words.flatMap((w, i) => {
     const was = post.slides[i]?.words;
     if (!w || !was) return [];
@@ -140,7 +142,7 @@ export default function PostEditor({ config }: { config: Config }) {
   const home = post.card_id ? `/cards/${post.card_id}` : "/queue";
   const approve = () => run(async () => {
     if (dirty) await api.updatePost(post.id, edits());
-    return api.approve(post.id, fromLocalInput(publishAt, tz).toISOString());
+    return api.approve(post.id, fromLocalInput(publishAt, tz).toISOString(), crosspostX);
   }, () => navigate(home));
 
   return (
@@ -249,8 +251,9 @@ export default function PostEditor({ config }: { config: Config }) {
             <p className={LABEL}>Schedule</p>
             <div className="mt-2 space-y-3">
               <ErrorNote text={error} />
-              {editable && (
+              {schedulable && (
                 <>
+                  {post.channel === "x" && <p className="text-xs text-ink-2">This copy keeps the same content as its Instagram post.</p>}
                   <label className="block text-xs text-ink-2">
                     Publish at ({tz})
                     {post.publish_at && publishAt === toLocalInput(post.publish_at, tz) && " · recommended"}
@@ -264,6 +267,10 @@ export default function PostEditor({ config }: { config: Config }) {
                       so this goes out at {config.publisher_hours[0]} instead.
                     </p>
                   )}
+                  {post.channel === "instagram" && post.kind !== "story" && <div className="rounded border border-line p-3">
+                    <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={crosspostX} onChange={(e) => setCrosspostX(e.target.checked)} className="mt-1" /> Also post to X</label>
+                    <p className="mt-1 text-xs text-ink-2">Uses the same caption and images. X allows up to four images; both platform limits are checked when scheduling. Image alt text is not sent to X. <Link to="/settings" className="text-moss underline">Connect X</Link></p>
+                  </div>}
                   <div className="flex flex-wrap gap-2">
                     <button type="button" disabled={busy || !publishAt} onClick={approve} className={PRIMARY}>Approve &amp; schedule</button>
                     {dirty && <button type="button" disabled={busy} onClick={save} className={SECONDARY}>Save edits</button>}
@@ -284,7 +291,7 @@ export default function PostEditor({ config }: { config: Config }) {
                 <>
                   <p className="text-sm text-ink-2">
                     Publishing started {fmt(post.updated_at, tz)}. If that is more than an hour ago, check the account on
-                    Instagram first: send it back to draft only if it never went out, or you will post it twice.
+                    {post.channel === "x" ? "X" : "Instagram"} first: send it back to draft only if it never went out, or you will post it twice.
                   </p>
                   <button type="button" disabled={busy} onClick={() => run(() => api.action(post.id, "back-to-draft"))} className={SECONDARY}>Back to draft</button>
                 </>
@@ -308,7 +315,7 @@ export default function PostEditor({ config }: { config: Config }) {
               {post.published_at && (
                 <li>
                   Published {fmt(post.published_at, tz)}
-                  {post.permalink && <> · <a href={post.permalink} target="_blank" rel="noreferrer" className="text-moss hover:underline">View on Instagram</a></>}
+                  {post.permalink && <> · <a href={post.permalink} target="_blank" rel="noreferrer" className="text-moss hover:underline">View on {post.channel === "x" ? "X" : "Instagram"}</a></>}
                 </li>
               )}
               {post.status === "rejected" && <li>Rejected {fmt(post.updated_at, tz)}</li>}

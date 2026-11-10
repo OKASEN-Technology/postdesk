@@ -556,7 +556,7 @@ def test_brief_and_draft_buttons_link_to_the_private_preview(session):
     card = _briefed(session)
     url = f"https://postdesk.example/cards/{card.id}/preview"
     for buttons in (render.brief_buttons(card), render.schedule_buttons(card, "tomorrow")):
-        assert [{"text": "Preview Instagram post", "url": url}] in buttons["inline_keyboard"]
+        assert [{"text": "Preview Instagram & X", "url": url}] in buttons["inline_keyboard"]
         assert any("callback_data" in button for row in buttons["inline_keyboard"] for button in row)
 
 

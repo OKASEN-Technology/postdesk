@@ -11,6 +11,7 @@ export default function Preview({ config }: { config: Config }) {
   const [card, setCard] = useState<CardDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [slide, setSlide] = useState(0);
+  const [platform, setPlatform] = useState<"instagram" | "x">("instagram");
   const [broken, setBroken] = useState(false);
 
   useEffect(() => {
@@ -41,12 +42,30 @@ export default function Preview({ config }: { config: Config }) {
     <Link to={`/cards/${card.id}`} className="text-sm text-ink-2 hover:text-ink hover:underline">← Back to idea</Link>
     <div className="mb-5 mt-5">
       <p className="text-xs font-semibold uppercase tracking-[0.12em] text-moss">{concept ? "Concept preview" : "Draft preview"}</p>
-      <h1 className="mt-1 text-2xl font-semibold tracking-tight">Instagram preview</h1>
+      <h1 className="mt-1 text-2xl font-semibold tracking-tight">{platform === "x" ? "X" : "Instagram"} preview</h1>
       <p className="mt-2 text-sm leading-relaxed text-ink-2">{concept
         ? "A first look at the planned slides and any selected images. The final slides and caption are created after you approve the idea."
-        : "A preview of your draft. Instagram may display it a little differently."}</p>
+        : `A preview of your draft. ${platform === "x" ? "X" : "Instagram"} may display it a little differently.`}</p>
     </div>
-    <article aria-label="Instagram post preview" className="overflow-hidden rounded-lg border border-line bg-white text-[#171717] shadow-sm">
+    <div className="mb-4 flex gap-2" role="group" aria-label="Preview platform">
+      <button type="button" aria-pressed={platform === "instagram"} onClick={() => setPlatform("instagram")} className={`rounded-full border px-4 py-1.5 text-sm ${platform === "instagram" ? "border-ink bg-ink text-white" : "border-line bg-white text-ink"}`}>Instagram</button>
+      <button type="button" aria-pressed={platform === "x"} onClick={() => setPlatform("x")} className={`rounded-full border px-4 py-1.5 text-sm ${platform === "x" ? "border-ink bg-ink text-white" : "border-line bg-white text-ink"}`}>X</button>
+    </div>
+    {platform === "x" ? <article aria-label="X post preview" className="rounded-xl border border-line bg-white p-4 text-[#0f1419] shadow-sm">
+      <div className="flex items-start gap-3">
+        <div aria-hidden="true" className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[#171717] font-semibold uppercase text-white">{handle.charAt(0)}</div>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm"><span className="font-bold">{handle}</span> <span className="text-neutral-500">@{handle} · Preview</span></p>
+          <p className="mt-2 whitespace-pre-wrap break-words text-[15px] leading-relaxed">{caption || (concept ? "Caption to be written after the idea is approved." : "No caption for this draft.")}</p>
+          {images.length > 0 && <div className={`mt-3 grid overflow-hidden rounded-2xl border border-neutral-200 ${images.length > 1 ? "grid-cols-2 gap-0.5" : "grid-cols-1"}`}>
+            {images.slice(0, 4).map((img, i) => <div key={i} className="grid aspect-square place-items-center overflow-hidden bg-[#edeae5]">{img.url ? <img src={img.url} alt={img.alt} className="h-full w-full object-cover" /> : <p className="p-4 text-center text-xs text-neutral-600">{img.description || "Image not selected yet"}</p>}</div>)}
+          </div>}
+          <div aria-hidden="true" className="mt-4 flex justify-between text-xs text-neutral-500"><span>Reply</span><span>Repost</span><span>Like</span><span>Share</span></div>
+        </div>
+      </div>
+      {images.length > 4 && <p className="mt-3 text-xs text-clay">X supports four images. This idea has {images.length}; reduce them before scheduling both platforms.</p>}
+      <p className="mt-3 text-xs text-neutral-500">X uses the same caption and images. Limits are checked when you schedule.</p>
+    </article> : <article aria-label="Instagram post preview" className="overflow-hidden rounded-lg border border-line bg-white text-[#171717] shadow-sm">
       <div className="flex items-center gap-3 px-4 py-3">
         <div aria-hidden="true" className="grid h-9 w-9 place-items-center rounded-full bg-[#292929] text-sm font-semibold uppercase text-white">{handle.charAt(0)}</div>
         <div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold">{handle}</p><p className="text-xs text-neutral-500">Preview · Not published</p></div>
@@ -71,7 +90,7 @@ export default function Preview({ config }: { config: Config }) {
         {images.length > 1 && <p className="mt-2 text-center text-xs text-neutral-400" aria-label={`Slide ${slide + 1} of ${images.length}`}>{images.map((_, i) => <span key={i} className={i === slide ? "text-blue-500" : "text-neutral-300"}>● </span>)}</p>}
         <div className="mt-3 whitespace-pre-wrap break-words text-sm leading-relaxed"><span className="font-semibold">{handle}</span>{" "}{caption || (concept ? "Caption to be written after the idea is approved." : "No caption for this draft.")}</div>
       </div>
-    </article>
+    </article>}
     {concept && <section className="mt-5 rounded-lg border border-line bg-paper px-4 py-4"><h2 className="text-sm font-semibold">The idea</h2><p className="mt-2 whitespace-pre-wrap break-words text-sm leading-relaxed text-ink-2">{card.brief_md || card.body_md || card.title}</p></section>}
     <Link to={`/cards/${card.id}`} className="mt-5 inline-block text-sm font-medium text-moss hover:underline">Return to the idea to approve it or request changes →</Link>
     <p className="mt-4 text-xs leading-relaxed text-ink-3">This is a private Postdesk preview. Opening it does not publish or approve anything.</p>

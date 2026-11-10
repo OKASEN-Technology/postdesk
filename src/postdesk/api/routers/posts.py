@@ -187,7 +187,8 @@ def _then_board(result: PostItem, session: Session, actor: str) -> PostItem:
 @router.post("/{post_id}/approve", response_model=PostItem)
 def approve_post(post_id: uuid.UUID, body: PostApprove, actor: str = Depends(require_auth),
                  session: Session = Depends(get_session)) -> PostItem:
-    result = _run(queue.approve, session, post_id, publish_at=body.publish_at, approved_by=body.approved_by or actor)
+    result = _run(queue.approve, session, post_id, publish_at=body.publish_at, approved_by=body.approved_by or actor,
+                  crosspost_x=body.crosspost_x)
     return _then_board(result, session, actor)
 
 

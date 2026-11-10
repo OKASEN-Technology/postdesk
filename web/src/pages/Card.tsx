@@ -251,6 +251,7 @@ export default function Card({ config }: { config: Config }) {
 
           {card.drafts.length > 0 && (
             <Section title="Drafts">
+              <p className="mb-3 text-xs text-ink-2">To also post to X, open an Instagram draft and choose X when scheduling it.</p>
               <ul className="space-y-3">
                 {card.drafts.map((d) => (
                   <li key={d.id}>

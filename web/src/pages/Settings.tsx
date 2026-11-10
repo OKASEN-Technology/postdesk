@@ -30,6 +30,7 @@ export default function Settings({ onChange }: { config: Config; onChange?: () =
         AI keys can be saved securely below; other service credentials are managed by the server administrator.
       </p>
       <ConnectionsPanel />
+      <XConnection />
       <div className="mt-6 grid gap-6 lg:grid-cols-2">
         <div className="space-y-6">
           <Telegram data={data} onChange={saved} />
@@ -535,4 +536,39 @@ function Permissions() {
       )}
     </section>
   );
+}
+
+function XConnection() {
+  const blank = {api_key: "", api_secret: "", access_token: "", access_secret: ""};
+  const [values, setValues] = useState(blank);
+  const [status, setStatus] = useState<{configured: boolean; credential_storage: boolean} | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const load = () => api.xConnection().then(setStatus).catch((e) => setMessage(errorText(e)));
+  useEffect(() => { void load(); }, []);
+  async function save() {
+    setBusy(true); setMessage("");
+    try { const result = await api.saveXConnection(values); setValues(blank); setEditing(false); setMessage(`Connected and verified @${result.account.username}.`); await load(); }
+    catch (e) { setMessage(errorText(e)); } finally { setBusy(false); }
+  }
+  async function verify() {
+    setBusy(true); setMessage("");
+    try { const result = await api.verifyXConnection(); setMessage(`Verified @${result.account.username}.`); }
+    catch (e) { setMessage(errorText(e)); } finally { setBusy(false); }
+  }
+  return <section className={`${CARD} mt-6`}>
+    <h2 className="text-base font-semibold">X connection</h2>
+    <p className="mt-1 text-sm text-ink-2">Connect your X developer app to choose X alongside Instagram for individual posts. X API usage may incur charges.</p>
+    {status && <p className="mt-2 text-sm">{status.configured ? "Credentials saved" : "Not connected"}{!status.credential_storage && " · Credential encryption must be configured on the server."}</p>}
+    <div className="mt-3 flex gap-2">
+      <button type="button" className={SECONDARY} disabled={busy || !status?.credential_storage} onClick={() => { setEditing(!editing); setValues(blank); }}>{editing ? "Cancel" : status?.configured ? "Replace credentials" : "Connect X"}</button>
+      {status?.configured && <button type="button" className={SECONDARY} disabled={busy} onClick={() => void verify()}>Verify account</button>}
+    </div>
+    {editing && <form className="mt-3 space-y-2" onSubmit={(e) => { e.preventDefault(); void save(); }}>
+      {([ ["api_key", "API key"], ["api_secret", "API key secret"], ["access_token", "Access token"], ["access_secret", "Access token secret"] ] as const).map(([key, label]) => <label className="block text-xs text-ink-2" key={key}>{label}<input type="password" autoComplete="off" required value={values[key]} className={INPUT} onChange={(e) => setValues({...values, [key]: e.target.value})} /></label>)}
+      <button className={PRIMARY} disabled={busy}>{busy ? "Verifying…" : "Verify and save"}</button>
+    </form>}
+    {message && <p role="status" className="mt-2 text-sm text-ink-2">{message}</p>}
+  </section>;
 }

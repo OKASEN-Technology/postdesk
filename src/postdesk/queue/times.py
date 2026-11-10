@@ -49,7 +49,7 @@ def _taken(session: Session, *, story: bool, since: date, exclude: uuid.UUID | N
            ) -> tuple[Counter[date], set[datetime]]:
     """Per local day, how many posts of this kind hold a slot from `since`
     on, and the exact times they hold."""
-    stmt = select(SocialPost).where(SocialPost.status.in_(HOLDS_SLOT))
+    stmt = select(SocialPost).where(SocialPost.status.in_(HOLDS_SLOT), SocialPost.channel == "instagram")
     stmt = stmt.where(SocialPost.kind == "story") if story else stmt.where(SocialPost.kind != "story")
     days: Counter[date] = Counter()
     times: set[datetime] = set()

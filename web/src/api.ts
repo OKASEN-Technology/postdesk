@@ -165,7 +165,10 @@ export const api = {
     call<Post>("/api/posts", json("POST", body)),
   updatePost: (id: string, body: { title?: string; caption?: string; alt_texts?: string[]; slides?: SlidePatch[] }) =>
     call<Post>(`/api/posts/${id}`, json("PATCH", body)),
-  approve: (id: string, publish_at: string) => call<Post>(`/api/posts/${id}/approve`, json("POST", { publish_at })),
+  approve: (id: string, publish_at: string, crosspost_x = false) => call<Post>(`/api/posts/${id}/approve`, json("POST", { publish_at, crosspost_x })),
+  xConnection: () => call<{configured: boolean; credential_storage: boolean}>("/api/connections/x"),
+  saveXConnection: (credentials: {api_key: string; api_secret: string; access_token: string; access_secret: string}) => call<{account: {username: string; id: string}}>("/api/connections/x", json("PUT", credentials)),
+  verifyXConnection: () => call<{account: {username: string; id: string}}>("/api/connections/x/verify", json("POST")),
   action: (id: string, what: "unapprove" | "reject" | "back-to-draft") => call<Post>(`/api/posts/${id}/${what}`, json("POST")),
   lint: (caption: string) => call<Lint>("/api/posts/lint-caption", json("POST", { caption })),
   cards: () => call<CardRow[]>("/api/cards"),

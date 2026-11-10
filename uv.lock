@@ -799,6 +799,15 @@ wheels = [
 ]
 
 [[package]]
+name = "oauthlib"
+version = "4.0.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/33/17/2bb072de0b990303c985f26869fd47bb179024a051f47e7f9d208eb92f8e/oauthlib-4.0.1.tar.gz", hash = "sha256:3d73febdb6faa00f277c81fb04be7b7586fb96fc3b7f0b9c772dada69a25ede7", size = 191219, upload-time = "2026-10-31T09:52:58.008Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/df/ef/3b8adde1b32a6f540758bff734d3442c621734c83708e5f02b0ba2f43b84/oauthlib-4.0.1-py3-none-any.whl", hash = "sha256:498a298876e996301950a5b053d12c31628bb7b895db03666430c69ce182eb61", size = 161934, upload-time = "2026-10-31T09:52:56.206Z" },
+]
+
+[[package]]
 name = "openai"
 version = "3.48.0"
 source = { registry = "https://pypi.org/simple" }
@@ -934,6 +943,7 @@ dependencies = [
     { name = "feedparser" },
     { name = "httpx" },
     { name = "jsonschema" },
+    { name = "oauthlib" },
     { name = "openai" },
     { name = "pillow" },
     { name = "psycopg", extra = ["binary"] },
@@ -941,7 +951,9 @@ dependencies = [
     { name = "pydantic-settings" },
     { name = "python-multipart" },
     { name = "pyyaml" },
+    { name = "setuptools" },
     { name = "sqlalchemy" },
+    { name = "twitter-text-parser" },
     { name = "typer" },
     { name = "uvicorn", extra = ["standard"] },
 ]
@@ -968,6 +980,7 @@ requires-dist = [
     { name = "feedparser", specifier = ">=6.0" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "jsonschema", specifier = ">=4.23" },
+    { name = "oauthlib", specifier = ">=3.3" },
     { name = "openai", specifier = ">=1.0.0" },
     { name = "pillow", specifier = ">=13.0.0" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.3.4" },
@@ -979,7 +992,9 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "respx", marker = "extra == 'dev'", specifier = ">=0.22" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8" },
+    { name = "setuptools", specifier = "<81" },
     { name = "sqlalchemy", specifier = ">=2.0" },
+    { name = "twitter-text-parser", specifier = ">=3.0.0" },
     { name = "typer", specifier = ">=0.15" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.52.4" },
 ]
@@ -1501,6 +1516,15 @@ wheels = [
 ]
 
 [[package]]
+name = "setuptools"
+version = "80.10.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/76/95/faf61eb8363f26aa7e1d762267a8d602a1b26d4f3a1e758e92cb3cb8b054/setuptools-80.10.2.tar.gz", hash = "sha256:8b0e9d10c784bf7d262c4e5ec5d4ec94127ce206e8738f29a437945fbc219b70", size = 1200343, upload-time = "2026-01-25T22:38:17.252Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/94/b8/f1f62a5e3c0ad2ff1d189590bfa4c46b4f3b6e49cef6f26c6ee4e575394d/setuptools-80.10.2-py3-none-any.whl", hash = "sha256:95b30ddfb717250edb492926c92b5221f7ef3fbcc2b07579bcd4a27da21d0173", size = 1064234, upload-time = "2026-01-25T22:38:15.216Z" },
+]
+
+[[package]]
 name = "shellingham"
 version = "1.5.4"
 source = { registry = "https://pypi.org/simple" }
@@ -1628,6 +1652,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/ee/9f/c5201d42a484c061e528825fc8e2d565f5abd50a4ced6fb7d29c4ec99b2b/truststore-0.10.5.tar.gz", hash = "sha256:30d36967ccaded5cbb38d602c433f53600036c79d502f4533a49b60a03bbefcd", size = 28091, upload-time = "2026-10-12T22:27:31.808Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/51/e9/3a7820be2bb0fe53b6bc9c3be26d3d1158004e4c3ab953aa6840b955b1e9/truststore-0.10.5-py3-none-any.whl", hash = "sha256:9aaaedaefaf06d8b206278cf8b5012bc897f485a874503501e12d776df78951c", size = 19017, upload-time = "2026-10-12T22:27:30.377Z" },
+]
+
+[[package]]
+name = "twitter-text-parser"
+version = "3.0.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/a6/e6/332b2a4a8e29c773274099e0fa92fb68d72cd276b0e7f960780bc7898881/twitter_text_parser-3.0.0.tar.gz", hash = "sha256:9426e4fb9393c8c1adfb36ff5d91495ff4524782e85f80748f6ae0bc1efffcda", size = 61664, upload-time = "2023-05-24T13:00:55.825Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/49/10/7ef9bd301d70cb92a35eee7d38a6378c8b327dc16bdac3089386bd5f3231/twitter_text_parser-3.0.0-py3-none-any.whl", hash = "sha256:b36bd22e147db2234e79c73b021f10c3073e8c54f22b68c31696239b6917cdd3", size = 69912, upload-time = "2023-05-24T13:00:53.902Z" },
 ]
 
 [[package]]

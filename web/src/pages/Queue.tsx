@@ -12,7 +12,7 @@ const PAGE = 50;
  * publish order, then newest first. A post publishing for over an hour is
  * stuck; one publishing now is about to go out, so it heads Scheduled. */
 function sections(rows: Row[], now: number) {
-  const stuck = (r: Row) => r.status === "publishing" && now - Date.parse(r.updated_at) > HOUR_MS;
+  const stuck = (r: Row) => r.status === "publishing" && (!!r.error_excerpt || now - Date.parse(r.updated_at) > HOUR_MS);
   return [
     { title: "Needs attention", rows: [...rows.filter((r) => r.status === "failed"), ...rows.filter(stuck)] },
     { title: "To review", rows: rows.filter((r) => r.status === "draft") },
@@ -46,7 +46,7 @@ function Rows({ rows, tz }: { rows: Row[]; tz: string }) {
                 {r.title}
               </Link>
               <p className="truncate text-xs text-ink-2">
-                {r.kind} · {r.slide_count} slide{r.slide_count === 1 ? "" : "s"}{r.source_ref ? ` · ${r.source_ref}` : ""}
+                {r.channel === "x" ? "X" : "Instagram"} · {r.kind} · {r.slide_count} slide{r.slide_count === 1 ? "" : "s"}{r.source_ref ? ` · ${r.source_ref}` : ""}
               </p>
             </div>
             <Badge status={r.status} />

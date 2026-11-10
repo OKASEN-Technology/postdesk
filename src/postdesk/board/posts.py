@@ -46,7 +46,8 @@ def unfiled(session: Session, *, now: datetime | None = None) -> list[dict]:
     now = now or now_utc()
     rows = session.scalars(
         select(SocialPost)
-        .where(SocialPost.status == "draft", SocialPost.card_id.is_(None), SocialPost.created_at >= now - FILE_WINDOW)
+        .where(SocialPost.status == "draft", SocialPost.channel == "instagram",
+               SocialPost.card_id.is_(None), SocialPost.created_at >= now - FILE_WINDOW)
         .order_by(SocialPost.created_at)
     ).all()
     groups: dict[str, list[SocialPost]] = defaultdict(list)

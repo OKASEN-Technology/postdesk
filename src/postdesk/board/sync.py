@@ -51,7 +51,7 @@ def sync_action(rows: list[SocialPost]) -> str:
 
 
 def _live_comment(rows: list[SocialPost]) -> str:
-    return "Live:\n\n" + "\n".join(f"- {p.kind}: {p.permalink or '(no permalink)'}" for p in rows
+    return "Live:\n\n" + "\n".join(f"- {p.channel} {p.kind}: {p.permalink or '(no permalink)'}" for p in rows
                                    if p.status == "published")
 
 
@@ -64,13 +64,14 @@ def sync_card(session: Session, card: Card, *, log=print) -> str:
         cards.comment(session, card, "system", _live_comment(rows), commit=False)
         cards.set_column(session, card, "Live", actor="publisher", reason="published")
     elif action == "failed" and card.column != "On hold":
-        errors = "; ".join(f"{p.kind}: {p.error}" for p in rows if p.status == "failed")
+        errors = "; ".join(f"{p.channel} {p.kind}: {p.error}" for p in rows if p.status == "failed")
         transitions.stuck(session, card, f"publishing failed ({errors[:500]}). Check the account before you retry it "
                                          "(Back to draft in the queue, then schedule it again)", actor="publisher")
     elif action == "partial" and card.column != "On hold":
-        live = ", ".join(f"the {p.kind} ({p.permalink or 'no permalink'})" for p in rows if p.status == "published")
-        failed = " and the ".join(sorted({p.kind for p in rows if p.status == "failed"}))
-        errors = "; ".join(f"{p.kind}: {p.error}" for p in rows if p.status == "failed")
+        live = ", ".join(f"the {p.channel} {p.kind} ({p.permalink or 'no permalink'})"
+                         for p in rows if p.status == "published")
+        failed = " and the ".join(sorted({f"{p.channel} {p.kind}" for p in rows if p.status == "failed"}))
+        errors = "; ".join(f"{p.channel} {p.kind}: {p.error}" for p in rows if p.status == "failed")
         transitions.stuck(session, card, f"a partial failure: {live} is live, but the {failed} failed "
                                          f"({errors[:500]})", actor="publisher")
     elif action == "rejected" and card.closed_at is None:

@@ -276,3 +276,38 @@ def save_connection_key(name: str, body: dict, session: Session = Depends(get_se
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"ok": True}
+
+@router.get("/connections/x")
+def x_connection(session: Session = Depends(get_session)) -> dict:
+    from postdesk.x import credentials as x_credentials
+
+    try:
+        return {"configured": x_credentials.read(session) is not None,
+                "credential_storage": bool(settings.postdesk_credentials_key)}
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.put("/connections/x")
+def save_x_connection(body: dict, session: Session = Depends(get_session)) -> dict:
+    from postdesk.x import credentials as x_credentials
+    from postdesk.x.client import XError
+
+    try:
+        return {"account": x_credentials.save(session, body)}
+    except (ValueError, XError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/connections/x/verify")
+def verify_x_connection(session: Session = Depends(get_session)) -> dict:
+    from postdesk.x import credentials as x_credentials
+    from postdesk.x.client import XClient, XError
+
+    try:
+        saved = x_credentials.read(session)
+        if saved is None:
+            raise HTTPException(status_code=409, detail="Connect X first.")
+        return {"account": XClient(saved).whoami()}
+    except (ValueError, XError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
