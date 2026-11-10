@@ -11,6 +11,7 @@ from __future__ import annotations
 import base64
 import io
 import json
+import time
 import uuid
 from functools import lru_cache
 from pathlib import Path
@@ -27,6 +28,8 @@ from postdesk.db.models import ContentAsset
 SCHEMA_PATH = Path(__file__).with_name("slide.schema.json")
 TIMEOUT_S = 60
 JPEG_QUALITY = 92
+RETRY_DELAYS_S = (3, 8, 15, 30)
+TRANSIENT_STATUSES = {502, 503, 504}
 
 
 class RenderError(RuntimeError):
@@ -133,11 +136,23 @@ class Renderer:
         if problems:
             raise RenderError(f"the {spec.get('type', '?')} slide's spec is invalid: " + "; ".join(problems))
         theme = theme or self.theme
-        try:
-            resp = self.client.post(f"{self.url}/render", json=body, headers=self._headers(),
-                                    params={"theme": theme} if theme else None)
-        except httpx.HTTPError as e:
-            raise RenderError(f"rendering a {spec['type']} slide failed ({type(e).__name__}: {e})"[:500]) from e
+        for attempt in range(len(RETRY_DELAYS_S) + 1):
+            try:
+                resp = self.client.post(f"{self.url}/render", json=body, headers=self._headers(),
+                                        params={"theme": theme} if theme else None)
+            except (httpx.TimeoutException, httpx.NetworkError) as e:
+                if attempt == len(RETRY_DELAYS_S):
+                    raise RenderError(f"rendering a {spec['type']} slide failed: the renderer is temporarily "
+                                      f"unavailable ({type(e).__name__}). Please try again.") from e
+            except httpx.HTTPError as e:
+                raise RenderError(f"rendering a {spec['type']} slide failed ({type(e).__name__}: {e})"[:500]) from e
+            else:
+                if resp.status_code not in TRANSIENT_STATUSES:
+                    break
+                if attempt == len(RETRY_DELAYS_S):
+                    raise RenderError(f"rendering a {spec['type']} slide failed ({resp.status_code}): "
+                                      "the renderer is temporarily unavailable. Please try again.")
+            time.sleep(RETRY_DELAYS_S[attempt])
         if resp.status_code != 200:
             try:
                 detail = resp.json().get("detail") or resp.text

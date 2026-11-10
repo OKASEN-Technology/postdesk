@@ -296,7 +296,8 @@ def test_patch_spec_keeps_to_the_slides_words_and_the_known_numbers():
     assert maker.slide_words(None) is None
 
 
-def test_the_renderer_client_validates_before_it_posts_and_reports_failures():
+def test_the_renderer_client_validates_before_it_posts_and_reports_failures(monkeypatch):
+    monkeypatch.setattr(maker.render.time, "sleep", lambda _: None)
     rendered = []
     r = _renderer(rendered)
     assert r.health()["ok"] is True
@@ -315,6 +316,33 @@ def test_the_renderer_client_validates_before_it_posts_and_reports_failures():
         lambda req: (_ for _ in ()).throw(httpx.ConnectError("refused", request=req)))))
     with pytest.raises(maker.RenderError, match="ConnectError"):
         bad.render({"type": "cta", "kicker": "k", "headline": "h", "body": "b"})
+
+
+def test_renderer_retries_temporary_gateway_failures_without_exposing_html(monkeypatch):
+    delays = []
+    monkeypatch.setattr(maker.render.time, "sleep", delays.append)
+    responses = iter([httpx.Response(502, text="<html>gateway down</html>"),
+                      httpx.Response(503, text="<html>starting</html>"),
+                      httpx.Response(200, content=b"jpeg", headers={"content-type": "image/jpeg"})])
+    client = httpx.Client(transport=httpx.MockTransport(lambda _: next(responses)))
+    spec = {"type": "cta", "kicker": "k", "headline": "h", "body": "b"}
+    assert maker.Renderer("http://renderer.test", client=client).render(spec) == b"jpeg"
+    assert delays == [3, 8]
+
+    client = httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(502, text="<html>secret</html>")))
+    with pytest.raises(maker.RenderError, match="temporarily unavailable") as error:
+        maker.Renderer("http://renderer.test", client=client).render(spec)
+    assert "<html>" not in str(error.value)
+
+
+def test_renderer_does_not_retry_invalid_requests(monkeypatch):
+    delays = []
+    monkeypatch.setattr(maker.render.time, "sleep", delays.append)
+    client = httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(400, json={"detail": "bad slide"})))
+    with pytest.raises(maker.RenderError, match="bad slide"):
+        maker.Renderer("http://renderer.test", client=client).render(
+            {"type": "cta", "kicker": "k", "headline": "h", "body": "b"})
+    assert delays == []
 
 
 # ---------------------------------------------------------------- end to end
