@@ -80,6 +80,8 @@ def approve(session: Session, card: Card, *, actor: str, note: str | None = None
     goes back to the partner first."""
     cards.check_move(session, card, "Approved", actor=actor, allowed_from=("Planned", "Brief ready", "On hold"),
                      reason=note)
+    if card.column == "On hold" and posts.drafts(session, card.id):
+        raise BoardError("This card already has drafts. Review and approve the current draft instead of remaking it.")
     if note:
         cards.comment(session, card, "user", note, commit=False)
     if not card.brief_md and not card.plan.get("post") and not posts.drafts(session, card.id):
@@ -175,14 +177,22 @@ def hold(session: Session, card: Card, *, actor: str, note: str | None = None) -
     return card
 
 
+IMAGE_EDIT_HOLD = "Image updated. Review the current draft before scheduling."
+
+
 def accept_review_hold(session: Session, card: Card, *, actor: str) -> Card:
     """A person accepts the editor's flagged draft; scheduling remains separate."""
     if not cards.is_human(actor, session):
         raise BoardError("only the admin can accept a held review")
     cards.check_move(session, card, "Awaiting approval", actor=actor, allowed_from=("On hold",))
-    if (card.review or {}).get("column") != "On hold" or not posts.drafts(session, card.id):
+    review = card.review or {}
+    review_reason = review.get("why") or ""
+    current_reason = card.stuck_reason or ""
+    held_review = (review.get("column") == "On hold" and review_reason and
+                   (current_reason == review_reason or current_reason.startswith(review_reason + ":")))
+    if not (held_review or current_reason == IMAGE_EDIT_HOLD) or not posts.drafts(session, card.id):
         raise BoardError("there is no held review with drafts to accept")
-    cards.comment(session, card, "user", "Accepted the editor's review warnings as is; scheduling remains separate.",
+    cards.comment(session, card, "user", "Accepted the current draft as is; scheduling remains separate.",
                   commit=False)
     return set_column(session, card, "Awaiting approval", actor=actor, reason="accepted held review as is")
 
@@ -239,6 +249,8 @@ def move(session: Session, card: Card, column: str, *, actor: str, note: str | N
     if column == "In review":
         return send_to_review(session, card, actor=actor, note=note)
     if column == "Awaiting approval":
+        if card.column == "On hold":
+            return accept_review_hold(session, card, actor=actor)
         return unschedule(session, card, actor=actor)
     if column == "On hold":
         return hold(session, card, actor=actor, note=note)

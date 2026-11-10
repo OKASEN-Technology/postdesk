@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from sqlalchemy.orm import Session
 
 from postdesk import storage
-from postdesk.board import posts
+from postdesk.board import posts, transitions
 from postdesk.config import settings
 from postdesk.db.models import Card, ContentAsset
 
@@ -344,18 +344,22 @@ def on_hold(session: Session, card: Card, reason: str | None, *, buttons: bool =
     review = card.review or {}
     current_reason = reason or card.stuck_reason or ""
     review_reason = str(review.get("why") or "")
+    image_updated = current_reason == transitions.IMAGE_EDIT_HOLD
     # A later job failure can leave an older editor verdict on the card.
     # Never present that verdict as the reason for the new hold.
-    if drafts_ and review.get("column") == "On hold" and review_reason and current_reason and not (
-            current_reason == review_reason or current_reason.startswith(review_reason + ":")):
+    if (not image_updated and drafts_ and review.get("column") == "On hold" and review_reason and current_reason
+            and not (current_reason == review_reason or current_reason.startswith(review_reason + ":"))):
         blocks = [f"<b>On hold: {esc(card.title)}</b>", *md_blocks(current_reason),
                   "The requested changes may not have been applied. The previous draft is still available."]
         return messages(blocks, keyboard(card, [["im"], ["rt"], ["rv"], ["bp", "dr"]]) if buttons else None)
-    if not drafts_ or review.get("column") != "On hold":
+    if not drafts_ or (review.get("column") != "On hold" and not image_updated):
         blocks = [f"<b>On hold: {esc(card.title)}</b>", *md_blocks(reason or card.stuck_reason or "")]
         return messages(blocks, hold_buttons(session, card) if buttons else None)
     out: list[Out] = []
     blocks = [f"<b>Needs your review: {esc(card.title)}</b>"]
+    if image_updated:
+        blocks.append("The image was updated. The editor's previous notes may no longer match these images; "
+                      "check the current slides and alt text, or send them to the editor again.")
     if review.get("summary"):
         blocks += md_blocks(str(review["summary"]))
     for note in review.get("notes") or []:
@@ -393,7 +397,8 @@ def on_hold(session: Session, card: Card, reason: str | None, *, buttons: bool =
     blocks.append("<i>Review the images and notes. Approving keeps this as a draft; scheduling is a separate step.</i>")
     controls = None
     if buttons:
-        controls = keyboard(card, [["im"], ["rt"], ["bp", "dr"]])
+        controls = keyboard(card, [["im"], ["rv"], ["rt"], ["bp", "dr"]] if image_updated else
+                            [["im"], ["rt"], ["bp", "dr"]])
         if complete:
             controls["inline_keyboard"].insert(0, [{"text": ACTIONS["ok"],
                 "callback_data": f"{data('ok', card.id)}:{hold_version(session, card)}"}])

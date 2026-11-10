@@ -374,20 +374,31 @@ def test_telegram_upload_replaces_chosen_slide_and_returns_it_for_review(session
     commands.choose_slide(session, bot, tk.CHAT, card)
     choice_message = _sent_about(session, card)[-1].message_id
     choice = fake.last()["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
-    deps = commands.Deps(renderer=kit._renderer())
+    rendered = []
+    deps = commands.Deps(renderer=kit._renderer(rendered))
     handle(session, bot, tk.press(choice, message_id=choice_message), renderer=deps.renderer)
     upload_message = _sent_about(session, card)[-1].message_id
     upload = fake.last()["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
     handle(session, bot, tk.press(upload, message_id=upload_message), renderer=deps.renderer)
     prompt = _sent_about(session, card)[-1].message_id
     handle(session, bot, tk.photo(None, reply_to=prompt), renderer=deps.renderer)
+    assert rendered and any(str(rendered[-1].get(field, {}).get("url", "")).startswith("data:image/jpeg;base64,")
+                            for field in ("image", "background"))
     session.refresh(card)
-    assert card.column == "In review"
-    assert "review" in _jobs(session, card)
-    assert fake.of("sendPhoto")[-1]["caption"].startswith("Updated slide")
+    assert card.column == "On hold"
+    assert card.stuck_reason == transitions.IMAGE_EDIT_HOLD
+    assert fake.of("sendMediaGroup") and fake.of("sendPhoto")
+    assert fake.buttons(fake.last()) == ["ok", "im", "rv", "rt", "bp", "dr"]
     assert any("asset_id" in (s.get("spec", {}).get("image") or {})
                for p in posts.drafts(session, card.id) for s in p.slides)
     assert not any(p.status == "approved" for p in posts.for_card(session, card.id))
+    before = [(p.id, [s["asset_id"] for s in p.slides]) for p in posts.drafts(session, card.id)]
+    approval = fake.last()["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
+    handle(session, bot, tk.press(approval), renderer=deps.renderer)
+    session.refresh(card)
+    assert card.column == "Awaiting approval"
+    assert [(p.id, [s["asset_id"] for s in p.slides]) for p in posts.drafts(session, card.id)] == before
+    assert all(p.status == "draft" for p in posts.drafts(session, card.id))
 
 
 def test_telegram_offers_brand_images_and_rejects_old_choices(session, bot, fake, paired, monkeypatch):
@@ -415,7 +426,7 @@ def test_telegram_offers_brand_images_and_rejects_old_choices(session, bot, fake
     photo_message = _sent_about(session, card)[-2].message_id
     handle(session, bot, tk.press(pick, message_id=photo_message), renderer=deps.renderer)
     session.refresh(card)
-    assert card.column == "In review"
+    assert card.column == "On hold" and card.stuck_reason == transitions.IMAGE_EDIT_HOLD
     handle(session, bot, tk.press(pick, message_id=photo_message), renderer=deps.renderer)
     assert "no longer a draft" in fake.last()["text"]
 

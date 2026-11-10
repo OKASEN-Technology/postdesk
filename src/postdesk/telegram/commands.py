@@ -447,16 +447,9 @@ def replace_image(session: Session, bot: Bot, chat_id: str, card: Card, post: So
     session.refresh(post)
     image_target(session, card, post.id.hex, str(i), version)
     queue.update_post(session, post.id, rendered={i: (str(rendered.id), spec)})
-    transitions.send_to_review(session, card, actor=actor,
-                               note=f"Image changed on slide {i + 1}; review the image and update alt text.")
-    try:
-        preview = bot.send_photo(chat_id, image, caption=f"Updated slide {i + 1} · awaiting review")
-        remember(session, chat_id, preview["message_id"], card)
-        session.commit()
-    except TelegramError:
-        pass  # The editor will still send the complete draft for review.
-    say(session, bot, chat_id, "Image updated. I’m sending the new slide to the editor for review. "
-        "Nothing has been scheduled.", card=card)
+    cards.comment(session, card, "user", f"Image changed on slide {i + 1}; review the image and update alt text.")
+    transitions.hold(session, card, actor=actor, note=transitions.IMAGE_EDIT_HOLD)
+    send(session, bot, chat_id, render.on_hold(session, card, card.stuck_reason), card=card)
 
 
 # ---------------------------------------------------------------- commands

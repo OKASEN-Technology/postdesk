@@ -144,6 +144,8 @@ export default function Board({ config }: { config: Config }) {
     const id = e.dataTransfer.getData("text/plain");
     const card = cards?.find((c) => c.id === id);
     if (!card || card.column === column) return;
+    if (card.column === "On hold" && column === "Awaiting approval" &&
+        !window.confirm("Approve the current draft as it is? Scheduling is a separate step.")) return;
     if (GATES.includes(column) && !window.confirm(GATE_QUESTION[column])) return;
     let note: string | null = null;
     if (column === "On hold") note = window.prompt("Why is it on hold?") ?? null;

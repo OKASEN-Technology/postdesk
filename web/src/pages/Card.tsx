@@ -51,6 +51,10 @@ function Actions({ card, config, onDone }: { card: CardDetail; config: Config; o
   };
   const col = card.column;
   const hasDrafts = card.drafts.some((d) => d.status === "draft");
+  const canAcceptDraft = col === "On hold" && hasDrafts &&
+    (card.stuck_reason === "Image updated. Review the current draft before scheduling." ||
+     (card.review?.column === "On hold" && !!card.review?.why &&
+      (card.stuck_reason === card.review.why || !!card.stuck_reason?.startsWith(`${card.review.why}:`))));
   const needNote = () => { if (!note.trim()) { setError("Write what to change first."); return false; } return true; };
 
   if (card.closed) return <p className="text-sm text-ink-2">This card is closed.</p>;
@@ -77,10 +81,16 @@ function Actions({ card, config, onDone }: { card: CardDetail; config: Config; o
       )}
       <div className="flex flex-wrap gap-2">
         {col === "Inbox" && <button type="button" disabled={busy} className={PRIMARY} onClick={() => move("Planned", { note })}>Plan it</button>}
-        {["Planned", "Brief ready", "On hold"].includes(col) && (
+        {(["Planned", "Brief ready"].includes(col) || (col === "On hold" && !hasDrafts)) && (
           <button type="button" disabled={busy} className={col === "Brief ready" ? PRIMARY : SECONDARY}
                   onClick={() => move("Approved", { note, ask: "Approve this brief? The maker starts on it now." })}>
             Approve
+          </button>
+        )}
+        {canAcceptDraft && (
+          <button type="button" disabled={busy} className={PRIMARY}
+                  onClick={() => move("Awaiting approval", { ask: "Approve the current draft as it is? Scheduling is a separate step." })}>
+            Approve draft as is
           </button>
         )}
         {col === "Scheduled" && <button type="button" disabled={busy} className={SECONDARY} onClick={() => move("Awaiting approval")}>Unschedule</button>}
@@ -280,6 +290,8 @@ export default function Card({ config }: { config: Config }) {
           {card.review && (
             <Section title={`The editor's verdict (round ${card.review.round})`}
                      aside={<span className={`text-xs font-semibold ${card.review.verdict === "pass" ? "text-moss" : "text-clay"}`}>{card.review.verdict}</span>}>
+              {card.stuck_reason === "Image updated. Review the current draft before scheduling." &&
+                <p className="mb-2 text-xs text-ink-2">These notes are from before the image change. Review the current slides and alt text, or send the draft to the editor again.</p>}
               <Text md={card.review.summary} />
               <table className="mt-2 w-full text-xs">
                 <tbody>
