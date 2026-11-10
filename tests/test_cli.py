@@ -111,7 +111,7 @@ def test_queue_then_suggest_then_cron_publishes(tmp_path, session, monkeypatch):
     fake = FakeGraph()
     logs = []
     r = scheduler.run_once(force=True, log=logs.append, graph=_graph(fake))
-    assert str(post.id) in r.published and len(r.published) == 2 and r.failed == []
+    assert r.published == [str(post.id)] and r.failed == []
     session.refresh(post)
     assert post.status == "published" and post.permalink == "https://www.instagram.com/p/xyz/"
     items = [c for c in fake.created if c.get("is_carousel_item") == "true"]

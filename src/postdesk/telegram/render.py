@@ -152,8 +152,8 @@ ACTIONS = {
     "go": "Approve",
     "rt": "Rethink",
     "hd": "Hold",
-    "bx": "Schedule Instagram + Facebook + X",
-    "bt": "Choose time for Instagram + Facebook + X",
+    "bx": "Schedule Instagram + X",
+    "bt": "Choose time for Instagram + X",
     "vw": "Open card",
     "sc": "Schedule",
     "pk": "Pick a time",
@@ -194,15 +194,11 @@ def brief_buttons(card: Card) -> dict:
     return buttons
 
 
-def schedule_buttons(card: Card, when: str, *, retry_x: bool = False, retry_facebook: bool = False,
-                     facebook: bool = False) -> dict:
-    if retry_x or retry_facebook:
-        platform = "Facebook + X" if retry_x and retry_facebook else "X" if retry_x else "Facebook"
-        return keyboard(card, [[("sc", f"Retry {platform} · {when}")],
-                               [("pk", f"{platform} · choose time")], ["hd"]])
-    base = "Instagram + Facebook"
-    buttons = keyboard(card, [[("sc", f"{base} · {when}")], [("bx", f"{base} + X · {when}")],
-                              [("pk", "Choose time"), ("bt", "With X · choose time")], ["rt", "hd"]])
+def schedule_buttons(card: Card, when: str, *, retry_x: bool = False) -> dict:
+    if retry_x:
+        return keyboard(card, [[("sc", f"Retry X · {when}")], [("pk", "X · choose time")], ["hd"]])
+    buttons = keyboard(card, [[("sc", f"Instagram · {when}")], [("bx", f"Instagram + X · {when}")],
+                              [("pk", "Instagram · choose time"), ("bt", "Both · choose time")], ["rt", "hd"]])
     buttons["inline_keyboard"].insert(1, [{"text": "Preview Instagram & X", "url": preview_url(card)}])
     return buttons
 
@@ -336,14 +332,9 @@ def drafts(session: Session, card: Card, *, buttons: bool = True) -> list[Out]:
     rec = posts.recommended_time(session, card)
     blocks.append(f"Recommended time: <b>{esc(when(rec))}</b>. Reply to this message to comment, or /schedule "
                   "with a time.")
-    draft_rows = posts.drafts(session, card.id)
-    retry_only = bool(draft_rows) and all(p.channel in ("x", "facebook") for p in draft_rows)
-    retry_x = retry_only and any(p.channel == "x" for p in draft_rows)
-    retry_facebook = retry_only and any(p.channel == "facebook" for p in draft_rows)
-    from postdesk.facebook import credentials as fb_credentials
-    facebook = fb_credentials.read(session) is not None
-    out += messages(blocks, schedule_buttons(card, when(rec), retry_x=retry_x, retry_facebook=retry_facebook,
-                                             facebook=facebook) if buttons else None)
+    retry_x = bool(posts.drafts(session, card.id)) and all(
+        p.channel == "x" for p in posts.drafts(session, card.id))
+    out += messages(blocks, schedule_buttons(card, when(rec), retry_x=retry_x) if buttons else None)
     return out
 
 

@@ -371,38 +371,3 @@ def verify_x_connection(session: Session = Depends(get_session)) -> dict:
         return {"account": XClient(saved).whoami()}
     except (ValueError, XError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
-@router.get("/connections/facebook")
-def facebook_connection(session: Session = Depends(get_session)) -> dict:
-    from postdesk.facebook import credentials as fb_credentials
-
-    try:
-        return {"configured": fb_credentials.read(session) is not None,
-                "credential_storage": bool(settings.postdesk_credentials_key)}
-    except ValueError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-
-
-@router.put("/connections/facebook")
-def save_facebook_connection(body: dict, session: Session = Depends(get_session)) -> dict:
-    from postdesk.facebook import credentials as fb_credentials
-
-    try:
-        return {"account": fb_credentials.save(session, body)}
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
-@router.post("/connections/facebook/verify")
-def verify_facebook_connection(session: Session = Depends(get_session)) -> dict:
-    from postdesk.facebook import credentials as fb_credentials
-    from postdesk.instagram.graph import InstagramError
-
-    try:
-        saved = fb_credentials.read(session)
-        if not saved:
-            raise HTTPException(status_code=409, detail="Connect Facebook first.")
-        return {"account": fb_credentials.verify(saved)}
-    except (ValueError, InstagramError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc

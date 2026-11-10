@@ -185,16 +185,14 @@ def test_schedule_approves_the_drafts_at_the_time_and_unschedule_takes_it_back(s
         transitions.schedule(session, _briefed(session), actor="admin")
     when = posts.parse_when("tomorrow 18:00")
     approved = transitions.schedule(session, c, actor="admin", when=when)
-    feed, story = [p for p in approved if p.channel == "instagram"]
-    assert sum(p.channel == "facebook" for p in approved) == 2
+    feed, story = approved
     assert c.column == "Scheduled" and {p.status for p in approved} == {"approved"}
     assert feed.publish_at == when and story.publish_at == when + timedelta(minutes=15)
     assert feed.approved_by == "admin" and "Scheduled:" in cards.thread(session, c)[-1].body_md
 
     transitions.move(session, c, "Awaiting approval", actor="admin")
     assert c.column == "Awaiting approval"
-    assert {p.status for p in posts.for_card(session, c.id) if p.channel == "instagram"} == {"draft"}
-    assert {p.status for p in posts.for_card(session, c.id) if p.channel == "facebook"} == {"rejected"}
+    assert {p.status for p in posts.for_card(session, c.id)} == {"draft"}
 
 
 def test_parse_when_reads_what_a_person_types():
@@ -216,8 +214,8 @@ def test_parse_when_reads_what_a_person_types():
 def test_sync_moves_a_published_card_to_live_and_a_failed_one_to_on_hold(session):
     c = _awaiting(session)
     transitions.schedule(session, c, actor="admin")
-    paired = posts.for_card(session, c.id)
-    for p in paired:
+    feed, story = posts.for_card(session, c.id)
+    for p in (feed, story):
         p.status, p.permalink = "published", f"https://www.instagram.com/p/{p.kind}/"
     session.commit()
     assert sync.sync(session, log=lambda _m: None) == {str(c.id): "live"}
@@ -226,7 +224,7 @@ def test_sync_moves_a_published_card_to_live_and_a_failed_one_to_on_hold(session
 
     c = _awaiting(session)
     transitions.schedule(session, c, actor="admin")
-    feed, story = [p for p in posts.for_card(session, c.id) if p.channel == "instagram"]
+    feed, story = posts.for_card(session, c.id)
     feed.status, feed.permalink = "published", "https://www.instagram.com/p/x/"
     story.status, story.error = "failed", "Media upload has failed."
     session.commit()

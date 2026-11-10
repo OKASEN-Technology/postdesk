@@ -288,7 +288,7 @@ def test_awaiting_approval_sends_the_slides_caption_alt_text_checks_and_schedule
     assert "<blockquote expandable><b>Alt text</b>" in "".join(fake.texts())
     assert "✓ voice" in "".join(fake.texts()) and "Recommended time" in msg["text"]
     assert fake.buttons(msg) == ["sc", "bx", "pk", "bt", "rt", "hd"]
-    assert msg["reply_markup"]["inline_keyboard"][0][0]["text"].startswith("Instagram + Facebook · ")
+    assert msg["reply_markup"]["inline_keyboard"][0][0]["text"].startswith("Instagram · ")
 
 
 def test_the_schedule_button_schedules_at_the_recommended_time(session, bot, fake, paired):
@@ -306,8 +306,7 @@ def test_the_schedule_button_schedules_at_the_recommended_time(session, bot, fak
 
     handle(session, bot, tk.message("/unschedule"))
     session.refresh(c)
-    assert c.column == "Awaiting approval" and {p.status for p in posts.for_card(session, c.id)
-                                                if p.channel == "instagram"} == {"draft"}
+    assert c.column == "Awaiting approval" and {p.status for p in posts.for_card(session, c.id)} == {"draft"}
 
 
 def test_pick_a_time_then_reply_with_one(session, bot, fake, paired):
@@ -433,8 +432,7 @@ def test_hold_on_a_scheduled_card_unschedules_it_first(session, bot, fake, paire
     transitions.schedule(session, c, actor="admin")
     handle(session, bot, tk.message("/hold"))
     session.refresh(c)
-    assert c.column == "On hold" and {p.status for p in posts.for_card(session, c.id)
-                                    if p.channel == "instagram"} == {"draft"}
+    assert c.column == "On hold" and {p.status for p in posts.for_card(session, c.id)} == {"draft"}
 
 
 def test_to_the_editor_and_back_to_the_partner_buttons(session, bot, fake, paired):
@@ -475,8 +473,7 @@ def test_it_went_live_and_a_week_later_the_numbers(session, bot, fake, paired):
     week_ago = datetime.now(UTC) - timedelta(days=8)
     for p in posts.for_card(session, c.id):
         p.status, p.permalink, p.published_at = "published", f"https://www.instagram.com/p/{p.kind}/", week_ago
-        if p.channel == "instagram":
-            p.insights = {"reach": 1200, "saved": 30, "shares": 12, "profile_visits": 9}
+        p.insights = {"reach": 1200, "saved": 30, "shares": 12, "profile_visits": 9}
     session.commit()
     sync.sync(session, log=_quiet)
     assert c.column == "Measured"

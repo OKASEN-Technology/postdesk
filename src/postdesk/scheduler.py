@@ -68,16 +68,6 @@ def run_once(*, force: bool = False, log=print, graph: ig.Graph | None = None) -
             except Exception as e:
                 log(f"X publisher: {type(e).__name__}")
                 result.error = result.error or "X publisher failed. Check the service logs."
-            try:
-                from postdesk.facebook import publisher as facebook_publisher
-
-                fb_attempted = facebook_publisher.publish_due(session, log=log, graph=graph)
-                result.published.extend(str(p.id) for p in fb_attempted if p.status == "published")
-                result.failed.extend(str(p.id) for p in fb_attempted if p.status == "failed")
-            except Exception as e:
-                session.rollback()
-                log(f"Facebook publisher: {type(e).__name__}")
-                result.error = result.error or "Facebook publisher failed. Check the service logs."
         try:
             result.insights = insights.collect(session, graph, log=log)
         except Exception as e:

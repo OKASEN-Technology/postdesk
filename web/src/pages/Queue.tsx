@@ -46,7 +46,7 @@ function Rows({ rows, tz }: { rows: Row[]; tz: string }) {
                 {r.title}
               </Link>
               <p className="truncate text-xs text-ink-2">
-                {r.channel === "x" ? "X" : r.channel === "facebook" ? "Facebook" : "Instagram"} · {r.kind} · {r.slide_count} slide{r.slide_count === 1 ? "" : "s"}{r.source_ref ? ` · ${r.source_ref}` : ""}
+                {r.channel === "x" ? "X" : "Instagram"} · {r.kind} · {r.slide_count} slide{r.slide_count === 1 ? "" : "s"}{r.source_ref ? ` · ${r.source_ref}` : ""}
               </p>
             </div>
             <Badge status={r.status} />
