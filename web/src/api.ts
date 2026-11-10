@@ -152,6 +152,9 @@ const json = (method: string, body?: unknown): RequestInit => ({
   method, headers: { "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body),
 });
 
+export interface BrandItem { key: string; name: string; url: string; type: "image" | "video"; size: number; enabled: boolean }
+export interface BrandLibrary { configured: boolean; account_id?: string; bucket?: string; prefix?: string; public_url?: string; items: BrandItem[] }
+
 export const api = {
   authStatus: () => call<AuthStatus>("/api/auth/status"),
   setup: (password: string) => call<AuthStatus>("/api/auth/setup", json("POST", { password })),
@@ -194,6 +197,9 @@ export const api = {
   testConnection: (name: string) => call<{ok: boolean; detail: string}>(`/api/connections/${name}/test`, json("POST")),
   saveKey: (name: string, key: string) => call<{ok: boolean}>(`/api/connections/${name}/key`, json("PUT", {key})),
   settings: () => call<SettingsData>("/api/settings"),
+  brandLibrary: () => call<BrandLibrary>("/api/settings/brand-library"),
+  saveBrandLibrary: (body: Record<string, string>) => call<BrandLibrary>("/api/settings/brand-library", json("PUT", body)),
+  selectBrandLibrary: (excluded: string[]) => call<BrandLibrary>("/api/settings/brand-library/selection", json("PUT", {excluded})),
   testBrandAssets: (url: string) => call<{count: number}>("/api/settings/brand-assets/test", json("POST", { url })),
   saveSettings: (patch: Partial<Record<Section, unknown>>) => call<SettingsData>("/api/settings", json("PUT", patch)),
   status: () => call<AgentStatus>("/api/status"),
@@ -206,6 +212,7 @@ export const api = {
   permissions: (revoked = false) => call<Permission[]>(`/api/permissions${revoked ? "?revoked=true" : ""}`),
   addPermission: (body: PermissionIn) => call<Permission>("/api/permissions", json("POST", body)),
   revokePermission: (id: string) => call<Permission>(`/api/permissions/${id}`, json("DELETE")),
+  importBrandVideo: (key: string) => call<Asset>("/api/assets/brand-video", json("POST", {key})),
   upload: (file: File, credit: string) => {
     const form = new FormData();
     form.append("file", file);

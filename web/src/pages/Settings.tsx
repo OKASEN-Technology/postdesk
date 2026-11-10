@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import {
-  api, errorText, type Config, type Connections, type ModelChoice, type Permission, type PermissionIn, type Section, type SettingsData,
+  api, errorText, type Config, type Connections, type ModelChoice, type Permission, type PermissionIn, type Section, type SettingsData, type BrandLibrary,
 } from "../api";
 import { CARD, DANGER, ErrorNote, INPUT, LABEL, PRIMARY, SECONDARY } from "../ui";
 
@@ -42,6 +42,7 @@ export default function Settings({ onChange }: { config: Config; onChange?: () =
           <Account {...props} />
           <Schedule {...props} />
           <Voice {...props} />
+          <BrandLibraryPanel />
           <Images {...props} />
           <Sources {...props} />
         </div>
@@ -381,40 +382,66 @@ function Schedule({ data, save }: SectionProps) {
   );
 }
 
+function BrandLibraryPanel() {
+  const [library, setLibrary] = useState<BrandLibrary | null>(null);
+  const [form, setForm] = useState({account_id: "", bucket: "", prefix: "", public_url: "", access_key_id: "", secret_access_key: ""});
+  const [editing, setEditing] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const [search, setSearch] = useState("");
+  const [page, setPage] = useState(0);
+  const [excluded, setExcluded] = useState<string[]>([]);
+  const receive = (v: BrandLibrary) => { setLibrary(v); setExcluded(v.items.filter((i) => !i.enabled).map((i) => i.key)); };
+  useEffect(() => { api.brandLibrary().then(receive).catch((e) => setMessage(errorText(e))); }, []);
+  const visible = (library?.items ?? []).filter((i) => i.name.toLowerCase().includes(search.toLowerCase()));
+  const update = (key: keyof typeof form, value: string) => setForm((v) => ({...v, [key]: value}));
+  const connect = async (e: React.FormEvent) => {
+    e.preventDefault(); setBusy(true); setMessage("");
+    try { receive(await api.saveBrandLibrary(form)); setForm({...form, access_key_id: "", secret_access_key: ""}); setEditing(false); setMessage("Connected. Media will be discovered automatically."); }
+    catch (error) { setMessage(errorText(error)); } finally { setBusy(false); }
+  };
+  const saveSelection = async () => {
+    setBusy(true); setMessage("");
+    try { receive(await api.selectBrandLibrary(excluded)); setMessage("Media selection saved."); }
+    catch (error) { setMessage(errorText(error)); } finally { setBusy(false); }
+  };
+  return <section className={`${CARD} space-y-3`}>
+    <div className="flex flex-wrap items-center justify-between gap-2"><h2 className="text-base font-semibold">Brand media library</h2>
+      {library?.configured && <button className="text-xs text-moss hover:underline" onClick={() => { setForm({account_id: library.account_id ?? "", bucket: library.bucket ?? "", prefix: library.prefix ?? "", public_url: library.public_url ?? "", access_key_id: "", secret_access_key: ""}); setEditing(!editing); }}>Change connection</button>}</div>
+    <p className="text-sm text-ink-2">Connect a public R2 folder. Postdesk finds new media automatically. Enabled JPEG, PNG and WebP images and sampled video frames may be shared with your AI provider when preparing ideas.</p>
+    {(!library?.configured || editing) && <form className="space-y-2" onSubmit={connect}>
+      {([ ["account_id", "Cloudflare account ID", "Account ID"], ["bucket", "Bucket name", "vigil-public-assets"], ["prefix", "Folder prefix (optional)", "vigil/"], ["public_url", "Public folder URL", "https://assets.example.com/vigil/"], ["access_key_id", "Read-only access key ID", "Access key ID"], ["secret_access_key", "Read-only secret access key", "Secret access key"] ] as const).map(([key, label, placeholder]) => <label key={key} className="block text-xs text-ink-2">{label}<input className={INPUT} value={form[key]} type={key === "secret_access_key" ? "password" : "text"} autoComplete="off" placeholder={placeholder} onChange={(e) => update(key, e.target.value)} required={key !== "prefix"} /></label>)}
+      <p className="text-xs text-ink-2">Use an R2 Object Read only key scoped to this bucket. The credentials are encrypted and never displayed after saving.</p>
+      <button className={PRIMARY} disabled={busy}>{busy ? "Connecting…" : "Connect library"}</button>
+    </form>}
+    {library?.configured && !editing && <>
+      <p className="text-xs text-ink-2">{library.items.length} images and videos found · {library.bucket}/{library.prefix}</p>
+      <input className={INPUT} value={search} placeholder="Find a file" aria-label="Find brand media" onChange={(e) => {setSearch(e.target.value); setPage(0);}} />
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">{visible.slice(page * 12, page * 12 + 12).map((item) => <label key={item.key} className="min-w-0 rounded-md border border-line p-2 text-xs">
+        {item.type === "video" ? <video src={item.url} controls preload="none" className="aspect-square w-full bg-paper-2 object-contain" /> : <img src={item.url} alt="" loading="lazy" className="aspect-square w-full bg-paper-2 object-contain" />}
+        <span className="mt-2 flex items-start gap-2"><input type="checkbox" checked={!excluded.includes(item.key)} onChange={(e) => setExcluded((old) => e.target.checked ? old.filter((x) => x !== item.key) : [...old, item.key])} /><span className="min-w-0 break-all">{item.name}</span></span>
+      </label>)}</div>
+      {!visible.length && <p className="text-xs text-ink-2">No matching media.</p>}
+      <div className="flex flex-wrap items-center gap-3 text-xs"><button type="button" className={SECONDARY} disabled={page === 0} onClick={() => setPage(page - 1)}>Previous</button><span>Page {page + 1} of {Math.max(1, Math.ceil(visible.length / 12))}</span><button type="button" className={SECONDARY} disabled={(page + 1) * 12 >= visible.length} onClick={() => setPage(page + 1)}>Next</button></div>
+      <button type="button" className={PRIMARY} disabled={busy} onClick={() => void saveSelection()}>{busy ? "Saving…" : "Save media selection"}</button>
+    </>}
+    {message && <p role="status" className="text-xs text-ink-2">{message}</p>}
+  </section>;
+}
+
 function Voice({ data, save }: SectionProps) {
   const v = data.values.voice;
   const [text, setText] = useState(v.text ?? "");
-  const [brandAssets, setBrandAssets] = useState(v.brand_assets_url ?? "");
-  const [brandStatus, setBrandStatus] = useState("");
-  const [brandTesting, setBrandTesting] = useState(false);
   const [tags, setTags] = useState(v.hashtags.join(" "));
   const [max, setMax] = useState(v.max_hashtags);
   const [retired, setRetired] = useState(v.retired_phrases.join("\n"));
   return (
     <Panel title="Voice" section="voice" data={data} save={save}
-           patch={() => ({ text: text.trim() || null, brand_assets_url: brandAssets.trim() || null, hashtags: list(tags), max_hashtags: max, retired_phrases: lines(retired) })}
+           patch={() => ({ text: text.trim() || null, hashtags: list(tags), max_hashtags: max, retired_phrases: lines(retired) })}
            note={v.from_file ? `Read from ${v.file}. Saving here keeps your text instead.` : "Kept here, over the voice file."}>
       <Field label="How the account writes">
         <textarea className={`${INPUT} font-mono text-xs`} rows={8} value={text} onChange={(e) => setText(e.target.value)} />
       </Field>
-      <Field label="Public brand assets URL" hint="Public HTTPS folder containing postdesk-brand.json. The AI can consider the listed images when preparing a brief.">
-        <input type="url" className={INPUT} value={brandAssets} onChange={(e) => setBrandAssets(e.target.value)} placeholder="https://assets.example.com/brand/" />
-      </Field>
-      <details className="text-xs text-ink-2">
-        <summary className="cursor-pointer">How to list your brand images</summary>
-        <p className="mt-2">Put this file in your public folder and replace the path and description with your own. Paths are relative to the folder. Add up to 12 images.</p>
-        <pre className="mt-2 overflow-x-auto whitespace-pre-wrap rounded-md bg-paper-2 p-3">{'postdesk-brand.json\n{ "images": [{ "path": "product.jpg", "description": "Our product" }] }'}</pre>
-        <p className="mt-2">Use the public bucket URL, not the Cloudflare dashboard link. Listed images are shared with your selected AI provider.</p>
-      </details>
-      <div className="flex flex-wrap items-center gap-3">
-        <button type="button" className={SECONDARY} disabled={brandTesting} onClick={async () => {
-          setBrandTesting(true); setBrandStatus("");
-          try { const result = await api.testBrandAssets(brandAssets.trim()); setBrandStatus(`${result.count} image${result.count === 1 ? "" : "s"} listed. Save Voice to use them.`); }
-          catch (e) { setBrandStatus(errorText(e)); }
-          finally { setBrandTesting(false); }
-        }}>{brandTesting ? "Checking…" : "Check brand assets"}</button>
-        {brandStatus && <span role="status" className="text-xs text-ink-2">{brandStatus}</span>}
-      </div>
       <Field label="Hashtags" hint="The pool the maker picks from.">
         <input className={INPUT} value={tags} onChange={(e) => setTags(e.target.value)} />
       </Field>

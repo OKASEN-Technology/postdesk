@@ -113,9 +113,9 @@ export default function PostEditor({ config }: { config: Config }) {
   });
   const dirty = caption !== post.caption || title !== post.title || alts.some((a, i) => a !== post.slides[i]?.alt_text)
     || wordPatches.length > 0;
-  const tall = post.kind === "story";
+  const tall = post.kind === "story" || post.kind === "reel";
   const current = post.slides[slide];
-  const missingAlt = post.kind === "story" ? 0 : alts.filter((a) => !a.trim()).length;
+  const missingAlt = post.kind === "story" || post.kind === "reel" ? 0 : alts.filter((a) => !a.trim()).length;
   const chosen = publishAt ? fromLocalInput(publishAt, tz) : null;
   const inPast = chosen !== null && chosen.getTime() < Date.now();
   const outsideHours = publishAt !== "" && !insidePublisherHours(publishAt, config.publisher_hours);
@@ -171,7 +171,7 @@ export default function PostEditor({ config }: { config: Config }) {
       <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,26rem)]">
         <section aria-label="Slides" className="min-w-0">
           <div className={`relative mx-auto overflow-hidden rounded-lg border border-line bg-paper-2 ${tall ? "aspect-[9/16] w-[min(100%,calc(75vh*0.5625))]" : "aspect-[4/5] w-[min(100%,calc(75vh*0.8))]"}`}>
-            {current?.url ? <img src={current.url} alt={alts[slide] ?? ""} className="h-full w-full object-contain" /> : <p className="p-4 text-sm text-ink-3">No image</p>}
+            {current?.url ? post.kind === "reel" ? <video src={current.url} controls className="h-full w-full object-contain" /> : <img src={current.url} alt={alts[slide] ?? ""} className="h-full w-full object-contain" /> : <p className="p-4 text-sm text-ink-3">No image</p>}
             {count > 1 && (
               <>
                 <button type="button" onClick={() => go(-1)} disabled={slide === 0} aria-label="Previous slide"
@@ -223,7 +223,7 @@ export default function PostEditor({ config }: { config: Config }) {
             </section>
           )}
 
-          <section className={CARD}>
+          {post.kind !== "reel" && <section className={CARD}>
             <p className={LABEL}>Alt text · slide {slide + 1}</p>
             {editable ? (
               <textarea value={alts[slide] ?? ""} rows={3} placeholder="Describe what is on this slide" className={INPUT}
@@ -233,7 +233,7 @@ export default function PostEditor({ config }: { config: Config }) {
             )}
             {editable && post.kind !== "story" && !alts[slide]?.trim() && <p className="mt-1 text-xs text-clay">This slide has no alt text.</p>}
             {post.kind === "story" && <p className="mt-1 text-xs text-ink-3">Instagram does not take alt text on Stories; it is kept for your records.</p>}
-          </section>
+          </section>}
 
           {post.kind !== "story" && (
             <section className={CARD}>
@@ -267,7 +267,7 @@ export default function PostEditor({ config }: { config: Config }) {
                       so this goes out at {config.publisher_hours[0]} instead.
                     </p>
                   )}
-                  {post.channel === "instagram" && post.kind !== "story" && <div className="rounded border border-line p-3">
+                  {post.channel === "instagram" && post.kind !== "story" && post.kind !== "reel" && <div className="rounded border border-line p-3">
                     <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={crosspostX} onChange={(e) => setCrosspostX(e.target.checked)} className="mt-1" /> Also post to X</label>
                     <p className="mt-1 text-xs text-ink-2">Uses the same caption and images. X allows up to four images; both platform limits are checked when scheduling. Image alt text is not sent to X. <Link to="/settings" className="text-moss underline">Connect X</Link></p>
                   </div>}

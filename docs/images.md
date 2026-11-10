@@ -90,22 +90,35 @@ record; postdesk stores and credits whatever you return. Add its key to
 built-in ones; a plugin source is offered from its own code paths.)
 # Brand assets for briefs
 
-In Settings → Voice, set **Public brand assets URL** to the public HTTPS
-folder containing a `postdesk-brand.json` index. Public object storage does
-not normally list files at the folder URL, so the index names the images the
-partner can consider. For example:
+Connect a public Cloudflare R2 folder under Settings → Brand media library.
+Use a read-only key scoped to that bucket, and enter the public URL of the
+folder corresponding to the prefix. The app encrypts the credentials with
+`POSTDESK_CREDENTIALS_KEY` and never returns them to the browser. Public
+folder URLs serve files but cannot list them, so the read-only key is needed
+for discovery. A dashboard link is not a public folder URL.
 
-```json
-{"images": [
-  {"path": "helmet.jpg", "description": "Our head-worn device"},
-  {"path": "team/workshop.png", "description": "Our workshop"}
-]}
-```
+Postdesk lists the bucket automatically and lets an administrator exclude
+individual files. New files are enabled by default. During a partner turn it
+selects up to eight enabled JPEG, PNG or WebP images using filename hints. It
+also attempts to sample up to three frames from one enabled video of at most
+30 MB using ffmpeg. Filenames are hints rather than verified descriptions;
+frames do not represent the whole video or its audio. These images and frames
+are sent to the selected AI provider. GIF and AVIF files appear in the
+library, but are not sent as images to the model. Adding files affirms the
+account has the right to use and share them. A sample of a large library is
+shown to the AI on any one turn, not all files at once.
 
-Paths are relative to the public folder and must stay within it. List at most
-12 publicly accessible images. The partner sees the images and their descriptions
-as background, and may select them for a brief. Review the brief before use;
-adding an image affirms you have the right to use it. Only place files in the
-index that you are comfortable sharing with the selected AI provider. A
-Cloudflare dashboard link is not a public folder URL.
+The library can include files you do not intend to publish, so review its
+selection. Existing `postdesk-brand.json` configuration still works when no
+R2 connection is configured, for compatibility.
 
+# Reels
+
+From New post, choose Create an Instagram Reel and select an enabled brand
+video or upload an MP4. Postdesk supports files up to 50 MB, H.264 or HEVC
+video and AAC audio. It checks duration and width with ffprobe; Instagram
+performs additional validation when processing the video. The image and video
+tools are included in the Docker app image. Review the playable draft and
+approve it separately before the publisher can send it. Reels cannot currently
+be cross-posted to X. A separate scheduler must be running to publish approved
+posts; queueing a draft does not publish it.

@@ -72,7 +72,7 @@ export default function Preview({ config }: { config: Config }) {
         <span aria-hidden="true" className="text-xl leading-none">···</span>
       </div>
       <div className="relative grid aspect-[4/5] place-items-center overflow-hidden bg-[#edeae5]">
-        {current?.url && !broken ? <img src={current.url} alt={current.alt} onError={() => setBroken(true)} className="h-full w-full object-contain" />
+        {current?.url && !broken ? draft?.kind === "reel" ? <video src={current.url} controls className="h-full w-full object-contain" /> : <img src={current.url} alt={current.alt} onError={() => setBroken(true)} className="h-full w-full object-contain" />
           : <div className="max-w-[19rem] px-7 text-center"><p className="text-xs font-semibold uppercase tracking-[0.12em] text-neutral-500">{concept && current?.description ? `Slide ${slide + 1} idea` : broken ? "Image unavailable" : "Image not selected yet"}</p><p className="mt-3 whitespace-pre-wrap text-base leading-relaxed text-neutral-700">{concept && current?.description ? current.description : concept ? "The visual will appear here when one is chosen for the idea." : "This slide could not be displayed in the preview."}</p></div>}
         {images.length > 1 && <>
           <span className="absolute right-3 top-3 rounded-full bg-black/65 px-2.5 py-1 text-xs text-white">{slide + 1} / {images.length}</span>

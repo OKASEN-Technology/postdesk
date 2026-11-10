@@ -49,11 +49,22 @@ def turn(session: Session, card: Card, *, reason: str | None = None, call=None, 
     session.refresh(card)
     if card.column not in transitions.PARTNER_COLUMNS or card.closed_at is not None:
         return None
-    from postdesk import brand_assets
+    from postdesk import brand_assets, brand_library
 
     candidates = card_facts.image_candidates(session, card)
-    brand, warning = brand_assets.load(config_url=brand_assets.configured_url())
-    candidates += brand
+    warning = None
+    video_blocks = []
+    try:
+        if brand_library.read(session):
+            items = brand_library.available(session)
+            topic = f"{card.title} {card.body_md or ''}"
+            candidates += brand_library.select_for_card(items, topic)
+            video_blocks = brand_library.video_context(session, items, topic)
+        else:
+            brand, warning = brand_assets.load(config_url=brand_assets.configured_url())
+            candidates += brand
+    except ValueError as exc:
+        warning = str(exc)
     if call is None:
         tools = context.tools(card)
 
@@ -63,6 +74,7 @@ def turn(session: Session, card: Card, *, reason: str | None = None, call=None, 
 
     system, schema = context.system(), context.schema()
     content = context.user_content(session, card, candidates, reason)
+    content.extend(video_blocks)
     if warning:
         content.append({"type": "text", "text": f"Brand assets could not be loaded: {warning}. Tell the admin."})
     messages: list[dict] = [{"role": "user", "content": content}]

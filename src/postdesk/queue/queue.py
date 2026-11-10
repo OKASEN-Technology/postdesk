@@ -49,7 +49,7 @@ def _validate(session: Session, kind: str, caption: str, slides: list[dict]) -> 
     if kind in ("image", "story") and n != 1:
         raise QueueError(f"a {kind} is one image ({n} given)")
     if kind == "reel" and n != 1:
-        raise QueueError(f"a reel is one cover image ({n} given)")
+        raise QueueError(f"a reel is one video ({n} given)")
     if kind == "carousel" and not ig.CAROUSEL_MIN <= n <= ig.CAROUSEL_MAX:
         raise QueueError(f"a carousel takes {ig.CAROUSEL_MIN}–{ig.CAROUSEL_MAX} images ({n} given)")
     if kind == "story" and caption:
@@ -64,8 +64,9 @@ def _validate(session: Session, kind: str, caption: str, slides: list[dict]) -> 
             asset = None
         if asset is None:
             raise QueueError(f"asset {s.get('asset_id')} not found")
-        if asset.content_type != "image/jpeg":
-            raise QueueError(f"asset {asset.id} is {asset.content_type}; Instagram takes JPEG only")
+        expected = "video/mp4" if kind == "reel" else "image/jpeg"
+        if asset.content_type != expected:
+            raise QueueError(f"A {kind} requires {expected}; asset {asset.id} is {asset.content_type}.")
 
 
 def _normalise_slides(slides: list[dict]) -> list[dict]:
@@ -174,8 +175,8 @@ def approve(session: Session, post_id: uuid.UUID, *, publish_at: datetime, appro
     post = _get(session, post_id, lock=True)
     _require(post, "draft")
     _validate(session, post.kind, post.caption, post.slides)
-    if post.kind == "reel":
-        raise QueueError("reels cannot be published by this version yet")
+    if post.kind == "reel" and (crosspost_x or post.channel == "x"):
+        raise QueueError("Reel cross-posting to X is not supported. Schedule it for Instagram only.")
     if crosspost_x or post.channel == "x":
         from postdesk.x.publisher import validate_post
         validate_post(session, post)

@@ -29,6 +29,7 @@ from postdesk.storage import local, s3
 
 ALLOWED_IMAGE = frozenset({"image/png", "image/jpeg", "image/webp"})
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
+MAX_VIDEO_BYTES = 50 * 1024 * 1024
 IMMUTABLE = "public, max-age=31536000, immutable"
 
 
@@ -55,12 +56,13 @@ def store_asset(
     volume that was not persistent, a bucket emptied by hand) is healed by
     re-uploading the same bytes."""
     ct = (content_type or "").split(";")[0].strip().lower()
-    if ct not in ALLOWED_IMAGE:
+    if ct not in ALLOWED_IMAGE | {"video/mp4"}:
         raise AssetRejected(f"unsupported content type: {ct!r} (PNG, JPEG or WebP)")
     if not data:
         raise AssetRejected("empty file")
-    if len(data) > MAX_IMAGE_BYTES:
-        raise AssetRejected(f"file too large: {len(data)} bytes (limit {MAX_IMAGE_BYTES})")
+    limit = MAX_VIDEO_BYTES if ct == "video/mp4" else MAX_IMAGE_BYTES
+    if len(data) > limit:
+        raise AssetRejected(f"file too large: {len(data)} bytes (limit {limit})")
 
     sha = hashlib.sha256(data).hexdigest()
     where = backend()

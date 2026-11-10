@@ -113,6 +113,49 @@ def test_brand_assets(body: dict) -> dict:
     return {"count": len(assets)}
 
 
+@router.get("/settings/brand-library")
+def brand_library_status(session: Session = Depends(get_session)) -> dict:
+    from postdesk import brand_library
+
+    try:
+        connection = brand_library.read(session)
+        if not connection:
+            return {"configured": False, "items": []}
+        items = brand_library.available(session)
+        return {"configured": True, "account_id": connection["account_id"], "bucket": connection["bucket"],
+                "prefix": connection["prefix"], "public_url": connection["public_url"], "items": items}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.put("/settings/brand-library")
+def save_brand_library(body: dict, session: Session = Depends(get_session)) -> dict:
+    from postdesk import brand_library
+
+    try:
+        brand_library.save(session, body)
+        return brand_library_status(session)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.put("/settings/brand-library/selection")
+def select_brand_library(body: dict, session: Session = Depends(get_session)) -> dict:
+    from postdesk import brand_library
+
+    excluded = body.get("excluded")
+    if not isinstance(excluded, list) or any(not isinstance(x, str) for x in excluded) or len(excluded) > 10000:
+        raise HTTPException(status_code=400, detail="Invalid media selection")
+    try:
+        known = {x["key"] for x in brand_library.available(session)}
+        if not set(excluded) <= known:
+            raise ValueError("The library changed. Refresh and try again.")
+        store.put(session, brand_library.EXCLUDED_KEY, excluded)
+        return brand_library_status(session)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.get("/status", response_model=StatusOut)
 def status(session: Session = Depends(get_session)) -> StatusOut:
     store.refresh_config(session)
