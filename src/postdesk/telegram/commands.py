@@ -45,7 +45,8 @@ caption, to offer it a picture.
 /review: show the held post and its review
 /go: approve the brief
 /rethink &lt;note&gt;: back to the partner (or the maker) with a note
-/schedule [time]: schedule it: the recommended time, or <i>tomorrow 18:00</i>, <i>fri 7:30</i>
+/schedule [time]: schedule on Instagram
+/schedule_both [time]: schedule the same post on Instagram and X
 /unschedule: pull a scheduled post back
 /hold [why], /drop: hold it, or take it off the board
 /pause, /resume: stop or start the scout and the agents"""
@@ -251,8 +252,25 @@ def free_text(session: Session, bot: Bot, chat_id: str, msg: dict, text: str, ac
     card, purpose = target(session, chat_id, msg, "comment")
     if purpose == "rethink":
         do_rethink(session, bot, chat_id, card, text, actor)
-    elif purpose == "pick_time":
-        do_schedule(session, bot, chat_id, card, text, actor)
+    elif purpose in ("pick_time", "pick_both_time"):
+        do_schedule(session, bot, chat_id, card, text, actor, both=purpose == "pick_both_time")
+    elif purpose == "edit_shared_caption":
+        from twitter_text import parse_tweet
+        if card.column != "Awaiting approval":
+            raise Refused("This card is no longer awaiting approval. Open it from /board.")
+        parsed = parse_tweet(text)
+        if not parsed.valid:
+            raise Refused(f"That caption counts as {parsed.weightedLength} characters on X; maximum 280. "
+                          "Reply to the caption request again.")
+        feed = [p for p in posts.drafts(session, card.id)
+                if p.channel == "instagram" and p.kind in ("image", "carousel")]
+        if len(feed) != 1:
+            raise Refused("This card no longer has one editable Instagram feed draft. Open it from /board.")
+        queue.update_post(session, feed[0].id, caption=text)
+        transitions.send_to_review(session, card, actor=actor,
+                                   note="Shared Instagram and X caption edited in Telegram; review the updated draft.")
+        say(session, bot, chat_id, f"Caption updated on <b>{esc(card.title)}</b> and sent to the editor. "
+            "Nothing is scheduled; choose both platforms after review.", card=card)
     else:
         asked = actions.comment(session, card, text)
         say(session, bot, chat_id, f"Noted on <b>{esc(card.title)}</b>."
@@ -287,7 +305,10 @@ def command(session: Session, bot: Bot, chat_id: str, msg: dict, name: str, args
     elif name == "new":
         new(session, bot, chat_id, args, actor, deps)
     elif name == "board":
-        bot.send_message(chat_id, board_text(session))
+        open_ = cards.open_cards(session)
+        buttons = {"inline_keyboard": [[{"text": f"{c.column}: {c.title}"[:60],
+                                          "callback_data": render.data("vw", c.id)}] for c in open_[:30]]}
+        bot.send_message(chat_id, board_text(session), reply_markup=buttons if open_ else None)
     elif name == "queue":
         bot.send_message(chat_id, queue_text(session, now=deps.now))
     elif name == "status":
@@ -314,9 +335,9 @@ def command(session: Session, bot: Bot, chat_id: str, msg: dict, name: str, args
                 card, "rethink")
             return
         do_rethink(session, bot, chat_id, card, args, actor)
-    elif name == "schedule":
+    elif name in ("schedule", "schedule_both"):
         card, _ = target(session, chat_id, msg, "schedule")
-        do_schedule(session, bot, chat_id, card, args, actor)
+        do_schedule(session, bot, chat_id, card, args, actor, both=name == "schedule_both")
     elif name == "unschedule":
         card, _ = target(session, chat_id, msg, "unschedule")
         transitions.unschedule(session, card, actor=actor)
@@ -370,9 +391,21 @@ def do_rethink(session: Session, bot: Bot, chat_id: str, card: Card, note: str, 
     say(session, bot, chat_id, f"Back to {who} with your note: <b>{esc(card.title)}</b>.", card=card)
 
 
-def do_schedule(session: Session, bot: Bot, chat_id: str, card: Card, when_text: str, actor: str) -> None:
+def do_schedule(session: Session, bot: Bot, chat_id: str, card: Card, when_text: str, actor: str,
+                *, both: bool = False) -> None:
     when = posts.parse_when(when_text or "")
-    transitions.schedule(session, card, actor=actor, when=when)
+    if both and card.column == "Awaiting approval":
+        from twitter_text import parse_tweet
+        feed = [p for p in posts.drafts(session, card.id)
+                if p.channel == "instagram" and p.kind in ("image", "carousel")]
+        if len(feed) == 1:
+            parsed = parse_tweet(feed[0].caption)
+            if not parsed.valid and feed[0].caption:
+                ask(session, bot, chat_id, f"Nothing was scheduled. This caption counts as {parsed.weightedLength} "
+                    "characters on X; the limit is 280. Reply with a replacement caption for both platforms. "
+                    "It will go back to the editor for review before you schedule it.", card, "edit_shared_caption")
+                return
+    transitions.schedule(session, card, actor=actor, when=when, crosspost_x=both)
     say(session, bot, chat_id, render.scheduled_text(session, card), card=card)
 
 
@@ -391,7 +424,19 @@ def button(session: Session, bot: Bot, chat_id: str, cb: dict, actor: str, deps:
         bot.answer_callback(cb["id"], "That card is closed.")
         return
     try:
-        if action == "go":
+        if action == "vw":
+            if card.column == "Brief ready":
+                send(session, bot, chat_id, render.brief(session, card), card=card)
+            elif card.column == "Awaiting approval":
+                send(session, bot, chat_id, render.drafts(session, card), card=card)
+            elif card.column == "On hold":
+                send(session, bot, chat_id, render.on_hold(session, card, card.stuck_reason), card=card)
+            elif card.column == "Scheduled":
+                say(session, bot, chat_id, render.scheduled_text(session, card), card=card)
+            else:
+                say(session, bot, chat_id, f"<b>{esc(card.title)}</b> · {esc(card.column)}. "
+                    "Reply to this message with a note, or use /help for actions.", card=card)
+        elif action == "go":
             do_approve(session, bot, chat_id, card, actor)
         elif action == "ok":
             version = (cb.get("data") or "").split(":")[-1]
@@ -401,9 +446,16 @@ def button(session: Session, bot: Bot, chat_id: str, cb: dict, actor: str, deps:
             send(session, bot, chat_id, render.drafts(session, card), card=card)
         elif action == "sc":
             do_schedule(session, bot, chat_id, card, "", actor)
-        elif action == "pk":
-            ask(session, bot, chat_id, f"When should <b>{esc(card.title)}</b> go out? Reply with a time: "
-                "<i>tomorrow 18:00</i>, <i>fri 7:30</i>, or 2031-03-07T18:00.", card, "pick_time")
+        elif action == "bx":
+            do_schedule(session, bot, chat_id, card, "", actor, both=True)
+        elif action in ("pk", "bt"):
+            drafts = posts.drafts(session, card.id)
+            retry_x = bool(drafts) and all(p.channel == "x" for p in drafts)
+            platforms = "Instagram and X" if action == "bt" else ("X" if retry_x else "Instagram")
+            ask(session, bot, chat_id, f"When should <b>{esc(card.title)}</b> go out on {platforms}? "
+                "Reply with a time: "
+                "<i>tomorrow 18:00</i>, <i>fri 7:30</i>, or 2031-03-07T18:00.", card,
+                "pick_both_time" if action == "bt" else "pick_time")
             bot.answer_callback(cb["id"])
             return
         elif action == "rt":
@@ -421,7 +473,8 @@ def button(session: Session, bot: Bot, chat_id: str, cb: dict, actor: str, deps:
             transitions.retry(session, card, actor=actor)
             say(session, bot, chat_id, f"Back to draft: <b>{esc(card.title)}</b>. Check the account first, then "
                 "schedule it again.", card=card,
-                buttons=render.schedule_buttons(card, render.when(posts.recommended_time(session, card))))
+                buttons=render.schedule_buttons(card, render.when(posts.recommended_time(session, card)),
+                                                retry_x=all(p.channel == "x" for p in posts.drafts(session, card.id))))
         elif action == "rv":
             transitions.send_to_review(session, card, actor=actor, note="sent to the editor from Telegram")
             say(session, bot, chat_id, f"Sent to the editor: <b>{esc(card.title)}</b>.", card=card)
@@ -469,8 +522,11 @@ def queue_text(session: Session, *, now: datetime | None = None) -> str:
         return "Nothing is scheduled. Cards ready to schedule are on /board."
     lines = ["<b>Scheduled</b>"]
     for p in rows[:30]:
-        lines.append(f"• {esc(render.when(p.publish_at))}: {esc(p.kind)}, {esc(p.title)}"
-                     + (" (publishing now)" if p.status == "publishing" else ""))
+        state = ""
+        if p.status == "publishing":
+            state = " (status unconfirmed; check the platform before retrying)" if p.error else " (publishing now)"
+        lines.append(f"• {esc(render.when(p.publish_at))}: {esc(p.channel.title())} {esc(p.kind)}, {esc(p.title)}"
+                     + state)
     return "\n".join(lines)
 
 

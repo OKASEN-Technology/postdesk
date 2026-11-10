@@ -149,7 +149,7 @@ def recommended_time(session: Session, card: Card, *, now: datetime | None = Non
 
 
 def schedule(session: Session, card: Card, *, when: datetime | None, approved_by: str,
-             now: datetime | None = None) -> list[SocialPost]:
+             now: datetime | None = None, crosspost_x: bool = False) -> list[SocialPost]:
     """Approve the card's drafts: the feed post at `when` (else its
     recommended time, refreshed if that has passed), its Story 15 minutes
     after it, the frames of a Story-only post a frame gap apart, in order.
@@ -161,6 +161,9 @@ def schedule(session: Session, card: Card, *, when: datetime | None, approved_by
         if any(p.status in ("approved", "publishing", "published") for p in posts):
             return posts
         raise queue.QueueError("no draft is linked to this card")
+    eligible = [p for p in todo if p.channel == "instagram" and p.kind in ("image", "carousel")]
+    if crosspost_x and len(eligible) != 1:
+        raise queue.QueueError("Choose a card with one Instagram image or carousel to post to both platforms.")
     feed_at: datetime | None = None
     story_at: datetime | None = None
     for p in todo:
@@ -174,7 +177,8 @@ def schedule(session: Session, card: Card, *, when: datetime | None, approved_by
             at = p.publish_at
         else:
             at = queue.recommend_publish_at(session, p.kind, p.source_ref, now=now, exclude=p.id)
-        queue.approve(session, p.id, publish_at=at, approved_by=approved_by)
+        queue.approve(session, p.id, publish_at=at, approved_by=approved_by,
+                      crosspost_x=crosspost_x and p in eligible, commit=False)
         if p.kind != "story":
             feed_at = at
         else:

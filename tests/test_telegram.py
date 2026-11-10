@@ -287,8 +287,8 @@ def test_awaiting_approval_sends_the_slides_caption_alt_text_checks_and_schedule
     assert f"Ready to schedule: {c.title}" in "".join(fake.texts())
     assert "<blockquote expandable><b>Alt text</b>" in "".join(fake.texts())
     assert "✓ voice" in "".join(fake.texts()) and "Recommended time" in msg["text"]
-    assert fake.buttons(msg) == ["sc", "pk", "rt", "hd"]
-    assert msg["reply_markup"]["inline_keyboard"][0][0]["text"].startswith("Schedule for ")
+    assert fake.buttons(msg) == ["sc", "bx", "pk", "bt", "rt", "hd"]
+    assert msg["reply_markup"]["inline_keyboard"][0][0]["text"].startswith("Instagram · ")
 
 
 def test_the_schedule_button_schedules_at_the_recommended_time(session, bot, fake, paired):
@@ -383,7 +383,7 @@ def test_held_review_shows_images_notes_and_approval_without_scheduling(session,
     session.refresh(card)
     assert card.column == "Awaiting approval"
     assert all(p.status == "draft" for p in posts.drafts(session, card.id))
-    assert fake.buttons(fake.last()) == ["sc", "pk", "rt", "hd"]
+    assert fake.buttons(fake.last()) == ["sc", "bx", "pk", "bt", "rt", "hd"]
 
 
 def test_held_review_can_be_reopened_and_rejects_stale_or_unpaired_approval(session, bot, fake, paired):
@@ -464,7 +464,7 @@ def test_a_failed_publish_is_held_and_back_to_draft_puts_it_back(session, bot, f
     handle(session, bot, tk.press(render.data("bd", c.id)))
     session.refresh(c)
     assert c.column == "Awaiting approval" and {p.status for p in posts.for_card(session, c.id)} == {"draft"}
-    assert fake.buttons(fake.last()) == ["sc", "pk", "rt", "hd"]
+    assert fake.buttons(fake.last()) == ["sc", "bx", "pk", "bt", "rt", "hd"]
 
 
 def test_it_went_live_and_a_week_later_the_numbers(session, bot, fake, paired):
@@ -479,7 +479,7 @@ def test_it_went_live_and_a_week_later_the_numbers(session, bot, fake, paired):
     assert c.column == "Measured"
     bot_mod.send_notices(session, bot, log=_quiet)
     texts = "\n".join(fake.texts())
-    assert "Scheduled for" in texts  # the admin scheduled it on the web: the chat hears of it
+    assert "Scheduled:" in texts  # the admin scheduled it on the web: the chat hears of it
     assert "<b>Live:" in texts and "https://www.instagram.com/p/carousel/" in texts
     assert "A week on" in texts and "reach 2,400 · saves 60 · shares 24 · profile visits 18" in texts
 
@@ -746,3 +746,88 @@ def test_queue_reject_in_the_web_does_not_break_the_chat(session, bot, fake, pai
     sync.queue_changed(session, c.id, actor="admin", log=_quiet)
     handle(session, bot, tk.press(render.data("sc", c.id)))
     assert fake.of("answerCallbackQuery")[-1]["text"] == "That card is closed."
+
+
+def test_schedule_both_and_unschedule_from_telegram(session, bot, fake, paired, monkeypatch):
+    from postdesk.x import credentials
+
+    monkeypatch.setattr(credentials, "read", lambda session: object())
+    card = _awaiting(session)
+    feed = next(p for p in posts.drafts(session, card.id) if p.kind != "story")
+    feed.slides = feed.slides[:4]
+    session.commit()
+    handle(session, bot, tk.press(render.data("bt", card.id)))
+    asked = _sent_about(session, card)[-1]
+    assert asked.purpose == "pick_both_time"
+    handle(session, bot, tk.message("tomorrow 18:00", reply_to=asked.message_id))
+    rows = posts.for_card(session, card.id)
+    ig = next(p for p in rows if p.channel == "instagram" and p.kind != "story")
+    x = next(p for p in rows if p.channel == "x")
+    story = next(p for p in rows if p.kind == "story")
+    assert x.caption == ig.caption and x.slides == ig.slides and x.publish_at == ig.publish_at
+    assert story.channel == "instagram" and story.publish_at == ig.publish_at + timedelta(minutes=15)
+    assert "Instagram" in fake.last()["text"] and "X" in fake.last()["text"]
+    handle(session, bot, tk.message("/unschedule"))
+    assert card.column == "Awaiting approval"
+    assert all(p.status != "approved" for p in posts.for_card(session, card.id))
+
+
+def test_long_shared_caption_is_edited_and_reviewed_before_scheduling(session, bot, fake, paired):
+    card = _awaiting(session)
+    feed = next(p for p in posts.drafts(session, card.id) if p.kind != "story")
+    queue.update_post(session, feed.id, caption="a" * 500)
+    handle(session, bot, tk.press(render.data("bx", card.id)))
+    assert card.column == "Awaiting approval"
+    assert all(p.status == "draft" for p in posts.for_card(session, card.id))
+    asked = _sent_about(session, card)[-1]
+    assert asked.purpose == "edit_shared_caption" and "Nothing was scheduled" in fake.last()["text"]
+    handle(session, bot, tk.message("A shared caption.", reply_to=asked.message_id))
+    assert feed.caption == "A shared caption." and card.column == "In review"
+    assert "review" in _jobs(session, card)
+    assert all(p.status == "draft" for p in posts.for_card(session, card.id))
+
+
+def test_failed_crosspost_validation_is_atomic(session, bot, fake, paired, monkeypatch):
+    from postdesk.x import credentials
+
+    monkeypatch.setattr(credentials, "read", lambda session: None)
+    card = _awaiting(session)
+    feed = next(p for p in posts.drafts(session, card.id) if p.kind != "story")
+    feed.slides = feed.slides[:4]
+    session.commit()
+    handle(session, bot, tk.press(render.data("bx", card.id)))
+    assert "Connect X" in fake.last()["text"]
+    assert card.column == "Awaiting approval"
+    assert all(p.status == "draft" for p in posts.for_card(session, card.id))
+
+
+def test_board_can_reopen_a_specific_card(session, bot, fake, paired):
+    first = _awaiting(session)
+    _briefed(session)
+    handle(session, bot, tk.message("/board"))
+    assert "vw" in fake.buttons(fake.last())
+    handle(session, bot, tk.press(render.data("vw", first.id)))
+    assert "Ready to schedule" in "".join(fake.texts())
+
+
+def test_retry_failed_x_does_not_repost_instagram(session, bot, fake, paired, monkeypatch):
+    from postdesk.x import credentials
+
+    monkeypatch.setattr(credentials, "read", lambda session: object())
+    card = _awaiting(session)
+    feed = next(p for p in posts.drafts(session, card.id) if p.kind != "story")
+    feed.slides = feed.slides[:4]
+    session.commit()
+    handle(session, bot, tk.press(render.data("bx", card.id)))
+    rows = posts.for_card(session, card.id)
+    x = next(p for p in rows if p.channel == "x")
+    for p in rows:
+        p.status = "failed" if p.channel == "x" else "published"
+    x.error = "X rejected the request"
+    session.commit()
+    sync.sync(session, log=_quiet)
+    handle(session, bot, tk.press(render.data("bd", card.id)))
+    assert "Retry X" in fake.last()["reply_markup"]["inline_keyboard"][0][0]["text"]
+    handle(session, bot, tk.press(render.data("sc", card.id)))
+    assert x.status == "approved"
+    assert all(p.status == "published" for p in rows if p.channel == "instagram")

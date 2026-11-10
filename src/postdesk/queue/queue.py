@@ -167,7 +167,7 @@ def update_post(
 
 
 def approve(session: Session, post_id: uuid.UUID, *, publish_at: datetime, approved_by: str,
-            crosspost_x: bool = False) -> SocialPost:
+            crosspost_x: bool = False, commit: bool = True) -> SocialPost:
     if publish_at.tzinfo is None:
         raise QueueError("publish_at needs a timezone")
     if not approved_by.strip():
@@ -216,8 +216,11 @@ def approve(session: Session, post_id: uuid.UUID, *, publish_at: datetime, appro
                                source_ref=post.source_ref, media={"instagram_post_id": str(post.id)},
                                publish_at=publish_at, approved_by=approved_by.strip(), approved_at=now,
                                created_by=post.created_by, created_at=now, updated_at=now))
-    session.commit()
-    session.refresh(post)
+    if commit:
+        session.commit()
+        session.refresh(post)
+    else:
+        session.flush()
     return post
 
 

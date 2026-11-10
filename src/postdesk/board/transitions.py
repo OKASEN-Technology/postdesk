@@ -124,16 +124,17 @@ def back_to_partner(session: Session, card: Card, *, actor: str, note: str | Non
     return card
 
 
-def schedule(session: Session, card: Card, *, actor: str, when: datetime | None = None) -> list[SocialPost]:
+def schedule(session: Session, card: Card, *, actor: str, when: datetime | None = None,
+             crosspost_x: bool = False) -> list[SocialPost]:
     """The second gate: the card's drafts approved in the queue at `when`
     (else the recommended time), then the card to Scheduled."""
     cards.check_move(session, card, "Scheduled", actor=actor, allowed_from=("Awaiting approval",))
     try:
-        approved = posts.schedule(session, card, when=when, approved_by=actor)
+        approved = posts.schedule(session, card, when=when, approved_by=actor, crosspost_x=crosspost_x)
     except (queue.QueueError, LookupError) as e:
         session.rollback()
         raise BoardError(f"not scheduled: {e}") from e
-    times = "; ".join(f"{p.kind} {_when(p.publish_at)}" for p in approved if p.status != "rejected")
+    times = "; ".join(f"{p.channel} {p.kind} {_when(p.publish_at)}" for p in approved if p.status != "rejected")
     set_column(session, card, "Scheduled", actor=actor, reason=f"scheduled: {times}")
     cards.comment(session, card, "system", f"Scheduled: {times}. Unschedule to change the time.")
     return approved

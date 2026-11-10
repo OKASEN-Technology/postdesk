@@ -152,6 +152,9 @@ ACTIONS = {
     "go": "Approve",
     "rt": "Rethink",
     "hd": "Hold",
+    "bx": "Schedule Instagram + X",
+    "bt": "Choose time for Instagram + X",
+    "vw": "Open card",
     "sc": "Schedule",
     "pk": "Pick a time",
     "bd": "Back to draft",
@@ -191,8 +194,11 @@ def brief_buttons(card: Card) -> dict:
     return buttons
 
 
-def schedule_buttons(card: Card, when: str) -> dict:
-    buttons = keyboard(card, [[("sc", f"Schedule for {when}")], ["pk"], ["rt", "hd"]])
+def schedule_buttons(card: Card, when: str, *, retry_x: bool = False) -> dict:
+    if retry_x:
+        return keyboard(card, [[("sc", f"Retry X · {when}")], [("pk", "X · choose time")], ["hd"]])
+    buttons = keyboard(card, [[("sc", f"Instagram · {when}")], [("bx", f"Instagram + X · {when}")],
+                              [("pk", "Instagram · choose time"), ("bt", "Both · choose time")], ["rt", "hd"]])
     buttons["inline_keyboard"].insert(1, [{"text": "Preview Instagram & X", "url": preview_url(card)}])
     return buttons
 
@@ -326,7 +332,9 @@ def drafts(session: Session, card: Card, *, buttons: bool = True) -> list[Out]:
     rec = posts.recommended_time(session, card)
     blocks.append(f"Recommended time: <b>{esc(when(rec))}</b>. Reply to this message to comment, or /schedule "
                   "with a time.")
-    out += messages(blocks, schedule_buttons(card, when(rec)) if buttons else None)
+    retry_x = bool(posts.drafts(session, card.id)) and all(
+        p.channel == "x" for p in posts.drafts(session, card.id))
+    out += messages(blocks, schedule_buttons(card, when(rec), retry_x=retry_x) if buttons else None)
     return out
 
 
@@ -393,11 +401,13 @@ def on_hold(session: Session, card: Card, reason: str | None, *, buttons: bool =
 
 def live(session: Session, card: Card) -> list[Out]:
     rows = [p for p in posts.for_card(session, card.id) if p.status == "published"]
-    links = "\n".join(f"{esc(p.kind)}: {esc(p.permalink or '(no permalink)')}" for p in rows)
+    links = "\n".join(f"{esc(p.channel)} {esc(p.kind)}: {esc(p.permalink or '(no permalink)')}" for p in rows)
     return messages([f"<b>Live: {esc(card.title)}</b>", links])
 
 
 def scheduled_text(session: Session, card: Card) -> str:
-    at = [p.publish_at for p in posts.for_card(session, card.id) if p.status == "approved" and p.publish_at]
-    return (f"Scheduled for <b>{esc(when(min(at)) if at else 'its time')}</b>: {esc(card.title)}. "
-            "Reply /unschedule to pull it.")
+    rows = [p for p in posts.for_card(session, card.id) if p.status == "approved" and p.publish_at]
+    lines = [f"<b>Scheduled: {esc(card.title)}</b>"]
+    lines += [f"• {esc(p.channel.title())} {esc(p.kind)} · {esc(when(p.publish_at))}" for p in rows]
+    lines.append("Reply /unschedule to pull it.")
+    return "\n".join(lines)
