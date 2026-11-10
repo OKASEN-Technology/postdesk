@@ -96,6 +96,23 @@ def put_settings(body: dict, session: Session = Depends(get_session)) -> dict:
     return get_settings(session)
 
 
+@router.post("/settings/brand-assets/test")
+def test_brand_assets(body: dict) -> dict:
+    from postdesk import brand_assets
+    from postdesk.config import Voice
+
+    try:
+        url = Voice(brand_assets_url=body.get("url")).brand_assets_url
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    if not url:
+        raise HTTPException(status_code=400, detail="Enter a public brand assets URL first")
+    assets, error = brand_assets.load(config_url=url)
+    if error:
+        raise HTTPException(status_code=400, detail=error)
+    return {"count": len(assets)}
+
+
 @router.get("/status", response_model=StatusOut)
 def status(session: Session = Depends(get_session)) -> StatusOut:
     store.refresh_config(session)

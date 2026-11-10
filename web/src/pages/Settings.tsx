@@ -384,16 +384,37 @@ function Schedule({ data, save }: SectionProps) {
 function Voice({ data, save }: SectionProps) {
   const v = data.values.voice;
   const [text, setText] = useState(v.text ?? "");
+  const [brandAssets, setBrandAssets] = useState(v.brand_assets_url ?? "");
+  const [brandStatus, setBrandStatus] = useState("");
+  const [brandTesting, setBrandTesting] = useState(false);
   const [tags, setTags] = useState(v.hashtags.join(" "));
   const [max, setMax] = useState(v.max_hashtags);
   const [retired, setRetired] = useState(v.retired_phrases.join("\n"));
   return (
     <Panel title="Voice" section="voice" data={data} save={save}
-           patch={() => ({ text: text.trim() || null, hashtags: list(tags), max_hashtags: max, retired_phrases: lines(retired) })}
+           patch={() => ({ text: text.trim() || null, brand_assets_url: brandAssets.trim() || null, hashtags: list(tags), max_hashtags: max, retired_phrases: lines(retired) })}
            note={v.from_file ? `Read from ${v.file}. Saving here keeps your text instead.` : "Kept here, over the voice file."}>
       <Field label="How the account writes">
         <textarea className={`${INPUT} font-mono text-xs`} rows={8} value={text} onChange={(e) => setText(e.target.value)} />
       </Field>
+      <Field label="Public brand assets URL" hint="Public HTTPS folder containing postdesk-brand.json. The AI can consider the listed images when preparing a brief.">
+        <input type="url" className={INPUT} value={brandAssets} onChange={(e) => setBrandAssets(e.target.value)} placeholder="https://assets.example.com/brand/" />
+      </Field>
+      <details className="text-xs text-ink-2">
+        <summary className="cursor-pointer">How to list your brand images</summary>
+        <p className="mt-2">Put this file in your public folder and replace the path and description with your own. Paths are relative to the folder. Add up to 12 images.</p>
+        <pre className="mt-2 overflow-x-auto whitespace-pre-wrap rounded-md bg-paper-2 p-3">{'postdesk-brand.json\n{ "images": [{ "path": "product.jpg", "description": "Our product" }] }'}</pre>
+        <p className="mt-2">Use the public bucket URL, not the Cloudflare dashboard link. Listed images are shared with your selected AI provider.</p>
+      </details>
+      <div className="flex flex-wrap items-center gap-3">
+        <button type="button" className={SECONDARY} disabled={brandTesting} onClick={async () => {
+          setBrandTesting(true); setBrandStatus("");
+          try { const result = await api.testBrandAssets(brandAssets.trim()); setBrandStatus(`${result.count} image${result.count === 1 ? "" : "s"} listed. Save Voice to use them.`); }
+          catch (e) { setBrandStatus(errorText(e)); }
+          finally { setBrandTesting(false); }
+        }}>{brandTesting ? "Checking…" : "Check brand assets"}</button>
+        {brandStatus && <span role="status" className="text-xs text-ink-2">{brandStatus}</span>}
+      </div>
       <Field label="Hashtags" hint="The pool the maker picks from.">
         <input className={INPUT} value={tags} onChange={(e) => setTags(e.target.value)} />
       </Field>

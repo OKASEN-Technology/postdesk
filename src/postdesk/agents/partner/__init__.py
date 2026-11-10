@@ -49,7 +49,11 @@ def turn(session: Session, card: Card, *, reason: str | None = None, call=None, 
     session.refresh(card)
     if card.column not in transitions.PARTNER_COLUMNS or card.closed_at is not None:
         return None
+    from postdesk import brand_assets
+
     candidates = card_facts.image_candidates(session, card)
+    brand, warning = brand_assets.load(config_url=brand_assets.configured_url())
+    candidates += brand
     if call is None:
         tools = context.tools(card)
 
@@ -58,7 +62,10 @@ def turn(session: Session, card: Card, *, reason: str | None = None, call=None, 
                                        tools=tools, **kw)
 
     system, schema = context.system(), context.schema()
-    messages: list[dict] = [{"role": "user", "content": context.user_content(session, card, candidates, reason)}]
+    content = context.user_content(session, card, candidates, reason)
+    if warning:
+        content.append({"type": "text", "text": f"Brand assets could not be loaded: {warning}. Tell the admin."})
+    messages: list[dict] = [{"role": "user", "content": content}]
     known = card_facts.numbers(card)
     d: dict = {}
     problems: list[str] = []

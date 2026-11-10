@@ -88,3 +88,24 @@ museum = "my_package.images:MuseumImages"
 record; postdesk stores and credits whatever you return. Add its key to
 `[images].sources` to turn it on. (The partner's lookups use the three
 built-in ones; a plugin source is offered from its own code paths.)
+# Brand assets for briefs
+
+In Settings → Voice, set **Public brand assets URL** to the public HTTPS
+folder containing a `postdesk-brand.json` index. Public object storage does
+not normally list files at the folder URL, so the index names the images the
+partner can consider. For example:
+
+```json
+{"images": [
+  {"path": "helmet.jpg", "description": "Our head-worn device"},
+  {"path": "team/workshop.png", "description": "Our workshop"}
+]}
+```
+
+Paths are relative to the public folder and must stay within it. List at most
+12 publicly accessible images. The partner sees the images and their descriptions
+as background, and may select them for a brief. Review the brief before use;
+adding an image affirms you have the right to use it. Only place files in the
+index that you are comfortable sharing with the selected AI provider. A
+Cloudflare dashboard link is not a public folder URL.
+

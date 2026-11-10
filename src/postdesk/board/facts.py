@@ -138,7 +138,7 @@ def facts_for_make(card: Card) -> Facts:
         if f"subject-{i}" not in used:
             s.image = None
     for img in used.values():
-        if not img["key"].startswith(("attachment-", "found-")):
+        if not img["key"].startswith(("attachment-", "found-", "brand-")):
             continue
         pic = Image(url=img.get("url"), asset_id=img.get("asset_id"), credit=img.get("credit"),
                     licence=img.get("licence"), what=img.get("what"))

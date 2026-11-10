@@ -175,9 +175,23 @@ class Voice(BaseModel):
     # The voice as typed on the settings screen; when set it is used
     # instead of the file.
     text: str | None = None
+    brand_assets_url: str | None = None
     hashtags: list[str] = []
     max_hashtags: int = Field(5, ge=0)
     retired_phrases: list[str] = []
+
+    @field_validator("brand_assets_url")
+    @classmethod
+    def _brand_url(cls, value):
+        if not value:
+            return None
+        from urllib.parse import urlsplit
+
+        url = urlsplit(value)
+        if (url.scheme != "https" or not url.hostname or url.username or url.password or url.query or url.fragment
+                or url.hostname.lower() == "dash.cloudflare.com"):
+            raise ValueError("Use the public HTTPS bucket or folder URL, not a Cloudflare dashboard link")
+        return value.rstrip("/")
 
 
 class Theme(BaseModel):
@@ -327,7 +341,7 @@ EDITABLE: dict[str, tuple[str, ...] | None] = {
     "account": ("handle", "site", "timezone", "audience"),
     "schedule": ("feed_slot", "story_slot", "max_feed_per_day", "max_story_per_day", "min_lead_hours",
                  "publisher_hours"),
-    "voice": ("text", "hashtags", "max_hashtags", "retired_phrases"),
+    "voice": ("text", "brand_assets_url", "hashtags", "max_hashtags", "retired_phrases"),
     "theme": ("name",),
     "sources": None,
     "images": ("sources",),

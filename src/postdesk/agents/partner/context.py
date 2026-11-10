@@ -100,6 +100,7 @@ def user_content(session: Session, card: Card, candidates: list[dict], reason: s
     for c in candidates:
         label = (f"{c['key']}: " + (f"for {c['for']}; " if c.get("for") else "")
                  + f"credit: {c.get('credit') or '(none yet)'}; licence: {c.get('licence') or 'no licence'}; "
+                 + (f"description: {c['what']}; " if c.get("what") else "")
                  + ("a permission is on file; " if c.get("permission_id") else "")
                  + f"from {c['source']}" + (f"; the admin wrote: {c['note']}" if c.get("note") else ""))
         img = agents.image_for(c, session)

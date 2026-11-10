@@ -92,7 +92,7 @@ export interface SettingsValues {
     feed_slot: string; story_slot: string; max_feed_per_day: number; max_story_per_day: number; min_lead_hours: number;
     publisher_hours: [string, string];
   };
-  voice: { text: string | null; hashtags: string[]; max_hashtags: number; retired_phrases: string[]; file: string; from_file: boolean };
+  voice: { text: string | null; brand_assets_url: string | null; hashtags: string[]; max_hashtags: number; retired_phrases: string[]; file: string; from_file: boolean };
   theme: { name: string };
   sources: Record<string, Record<string, unknown>>;
   images: { sources: string[] };
@@ -194,6 +194,7 @@ export const api = {
   testConnection: (name: string) => call<{ok: boolean; detail: string}>(`/api/connections/${name}/test`, json("POST")),
   saveKey: (name: string, key: string) => call<{ok: boolean}>(`/api/connections/${name}/key`, json("PUT", {key})),
   settings: () => call<SettingsData>("/api/settings"),
+  testBrandAssets: (url: string) => call<{count: number}>("/api/settings/brand-assets/test", json("POST", { url })),
   saveSettings: (patch: Partial<Record<Section, unknown>>) => call<SettingsData>("/api/settings", json("PUT", patch)),
   status: () => call<AgentStatus>("/api/status"),
   pause: () => call<AgentStatus>("/api/agents/pause", json("POST")),
