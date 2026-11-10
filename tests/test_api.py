@@ -105,6 +105,27 @@ def test_media_serves_only_referenced_assets(admin, client):
     assert anonymous.get("/media/00000000-0000-0000-0000-000000000000").status_code == 404
 
 
+def test_private_s3_serves_referenced_media(admin, monkeypatch):
+    from postdesk.storage import s3
+
+    for name in ("storage_s3_endpoint", "storage_s3_bucket", "storage_s3_access_key_id",
+                 "storage_s3_secret_access_key"):
+        monkeypatch.setattr(settings, name, "configured")
+    monkeypatch.setattr(settings, "storage_s3_public_base_url", None)
+    objects = {}
+    monkeypatch.setattr(s3, "put", lambda sha, data, content_type: objects.update({sha: data}))
+    monkeypatch.setattr(s3, "get", lambda sha: objects[sha])
+    monkeypatch.setattr(s3, "has", lambda sha: sha in objects)
+    orphan = _upload(admin, colour=(1, 2, 3)).json()
+    post = _post(admin, n=1)
+    assert orphan["storage"] == "s3"
+    anonymous = TestClient(create_app(), base_url="https://postdesk.example")
+    assert anonymous.get(f"/media/{orphan['id']}").status_code == 404
+    response = anonymous.get(f"/media/{post['slides'][0]['asset_id']}")
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "image/jpeg"
+
+
 def test_queue_endpoints_and_immutability(admin):
     post = _post(admin)
     assert post["status"] == "draft" and post["publish_at"] is not None

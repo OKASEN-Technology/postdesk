@@ -5,9 +5,9 @@ Where slide images live. Instagram fetches every image from a public URL
 - **local**: `<POSTDESK_DATA_DIR>/uploads/<sha[:2]>/<sha>` on the app's
   disk, served at `<PUBLIC_BASE_URL>/media/<id>`. Works when the app itself
   is reachable from the internet.
-- **s3**: any S3-compatible public bucket (`STORAGE_S3_*`), key
-  `assets/<sha[:2]>/<sha>`, served from `STORAGE_S3_PUBLIC_BASE_URL`. Works
-  from a laptop behind NAT.
+- **s3**: any S3-compatible bucket (`STORAGE_S3_*`), key
+  `assets/<sha[:2]>/<sha>`. A public bucket URL is optional; without one,
+  the app serves referenced assets from its public `/media/<id>` endpoint.
 
 Content-addressed: the same bytes uploaded twice reuse one row, and a URL's
 bytes never change, so they are cached forever. `postdesk doctor` checks
@@ -114,8 +114,7 @@ def asset_url(asset_id: uuid.UUID | str | None) -> str | None:
 
 
 def public_url(asset: ContentAsset) -> str:
-    """The URL Instagram fetches: the bucket URL for an s3 asset (no
-    redirect for Instagram's fetcher to follow), else `asset_url`."""
+    """The URL Instagram fetches: a public bucket URL if set, else the app URL."""
     if asset.storage == "s3" and settings.storage_s3_public_base_url:
         return f"{settings.storage_s3_public_base_url.rstrip('/')}/{s3.key(asset.sha256)}"
     return asset_url(asset.id)  # type: ignore[return-value]

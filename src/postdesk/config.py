@@ -89,7 +89,7 @@ class Settings(BaseSettings):
 
     def s3_enabled(self) -> bool:
         return all((self.storage_s3_endpoint, self.storage_s3_bucket, self.storage_s3_access_key_id,
-                    self.storage_s3_secret_access_key, self.storage_s3_public_base_url))
+                    self.storage_s3_secret_access_key))
 
 
 def _parse_hhmm(value: str) -> time:
