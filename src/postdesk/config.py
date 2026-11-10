@@ -66,6 +66,8 @@ class Settings(BaseSettings):
     # A bearer token for scripts and for `postdesk` run on another machine;
     # inside Docker the CLI talks to the database directly and needs none.
     postdesk_api_token: str | None = None
+    # Hosted cron can opt in to one idea each morning in the account timezone.
+    postdesk_daily_ideas: bool = False
     # Where local storage keeps the slide files. Docker Compose mounts a volume.
     postdesk_data_dir: Path = Path("var")
     # Where postdesk.toml is. Default: the working directory.

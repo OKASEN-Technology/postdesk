@@ -172,3 +172,24 @@ def test_cron_keeps_due_posts_queued_when_media_host_is_unavailable(monkeypatch)
 def test_db_upgrade_is_idempotent(database):
     result = runner.invoke(app, ["db", "upgrade"])
     assert result.exit_code == 0 and "database at head" in result.output
+
+
+def test_cron_wakes_worker_for_idea_after_publishing(monkeypatch):
+    from contextlib import nullcontext
+
+    from postdesk import scheduler, store
+    from postdesk.board import daily_ideas
+    from postdesk.config import settings
+    from postdesk.db import session as db_session
+
+    calls = []
+    monkeypatch.setattr(settings, "postdesk_daily_ideas", True)
+    monkeypatch.setattr(db_session, "SessionLocal", lambda: nullcontext(object()))
+    monkeypatch.setattr(store, "refresh_config", lambda session, log: None)
+    monkeypatch.setattr(scheduler, "run_once", lambda force: calls.append("publish") or scheduler.RunResult())
+    monkeypatch.setattr(daily_ideas, "ensure_due", lambda session: calls.append("idea") or True)
+    monkeypatch.setattr(httpx, "get", lambda *a, **kw: calls.append("wake") or httpx.Response(
+        200, request=httpx.Request("GET", "https://postdesk.example/api/health")))
+    result = runner.invoke(app, ["cron"])
+    assert result.exit_code == 0, result.output
+    assert calls == ["publish", "idea", "wake"]

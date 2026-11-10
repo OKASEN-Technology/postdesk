@@ -371,3 +371,13 @@ text is not sent to X. Check each platform's result in the queue. If X reports
 an uncertain result, check the account before retrying to avoid duplicates.
 X API calls may incur charges. X integration must be verified against the
 account and access tier before relying on it.
+
+### Daily post ideas on a hosted cron
+
+Set `POSTDESK_DAILY_IDEAS=true` on the existing `postdesk cron` service to
+request one original post idea each day after 08:00 in the account timezone.
+The cron creates a reviewable brief and wakes the web worker, which uses the
+saved account context and sends the brief to the paired Telegram chat. The
+existing approval steps still apply. The cron checks on its normal schedule,
+so delivery may be later than 08:00; if the agents are paused or the spending
+limit is reached, the idea waits. This feature is disabled by default.

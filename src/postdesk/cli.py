@@ -218,6 +218,20 @@ def cron(force: bool = typer.Option(False, "--force", help="Publish even outside
     result = scheduler.run_once(force=force)
     if result.published or result.failed:
         _echo(f"published {len(result.published)}, failed {len(result.failed)}")
+
+    # Run this after publishing so an ideas or wake-up failure cannot block posts.
+    if settings.postdesk_daily_ideas:
+        from postdesk.board import daily_ideas
+
+        try:
+            with SessionLocal() as session:
+                wake = daily_ideas.ensure_due(session)
+            if wake:
+                response = httpx.get(f"{settings.public_base_url.rstrip('/')}/api/health", timeout=120)
+                response.raise_for_status()
+                _echo("daily idea: worker awake")
+        except Exception as e:
+            _err(f"daily idea: {type(e).__name__}; will retry on the next cron run")
     raise typer.Exit(0 if result.ok else 1)
 
 
