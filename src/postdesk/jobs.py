@@ -141,8 +141,9 @@ def reset_stale(session: Session, *, now: datetime | None = None) -> int:
 
 def is_transient(e: BaseException) -> bool:
     from postdesk import llm
+    from postdesk.maker.render import RendererUnavailable
 
-    if isinstance(e, Transient | llm.LLMTransient | httpx.TransportError):
+    if isinstance(e, Transient | llm.LLMTransient | httpx.TransportError | RendererUnavailable):
         return True
     cause = e.__cause__
     return isinstance(cause, httpx.TransportError)

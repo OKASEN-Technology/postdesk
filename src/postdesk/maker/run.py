@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from postdesk import instagram as ig
 from postdesk import llm, queue, storage
 from postdesk.config import config
-from postdesk.db.models import SocialPost
+from postdesk.db.models import ContentAsset, SocialPost
 from postdesk.maker.plans import Slot, Template, load_template, plan
 from postdesk.maker.render import Renderer
 from postdesk.maker.words import MakerError, known_numbers, patch_spec, write_copy
@@ -199,9 +199,19 @@ def _known(session: Session, post: SocialPost) -> set[str]:
     return known_numbers(*(p.caption for p in siblings), *(s.get("spec") for p in siblings for s in p.slides))
 
 
+def needs_theme_refresh(session: Session, post: SocialPost, theme: str) -> bool:
+    for slide in post.slides:
+        if not slide.get("spec") or not slide.get("asset_id"):
+            continue
+        asset = session.get(ContentAsset, uuid.UUID(slide["asset_id"]))
+        if asset and (asset.provenance or {}).get("theme") != theme:
+            return True
+    return False
+
+
 def revise(session: Session, post_id: uuid.UUID, *, caption: str | None = None, alt_texts: list[str] | None = None,
            slides: list[dict] | None = None, title: str | None = None, renderer: Renderer | None = None,
-           by: str = "admin") -> SocialPost:
+           by: str = "admin", refresh_theme: bool = False) -> SocialPost:
     """A draft's caption, alt text, title and the words on its slides. A
     slide patch (`{index (0-based), fields: copy field -> text}`) is merged
     into the slide's stored spec, checked like fresh copy (`patch_spec`)
@@ -209,7 +219,7 @@ def revise(session: Session, post_id: uuid.UUID, *, caption: str | None = None, 
     checked before anything renders, so a refused one leaves the post as
     it was. Refused on an approved post (unapprove first)."""
     rendered: dict[int, tuple[str, dict]] = {}
-    if slides:
+    if slides or refresh_theme:
         post = session.get(SocialPost, post_id)
         if post is None:
             raise LookupError(f"post {post_id} not found")
@@ -217,7 +227,7 @@ def revise(session: Session, post_id: uuid.UUID, *, caption: str | None = None, 
             raise queue.QueueError(f"post is {post.status}; this needs draft")
         specs: dict[int, dict] = {}
         known = None
-        for p in slides:
+        for p in slides or []:
             i, fields = int(p["index"]), dict(p.get("fields") or {})
             if not 0 <= i < len(post.slides):
                 raise queue.QueueError(f"slide index {i} is out of range (0–{len(post.slides) - 1})")
@@ -234,6 +244,13 @@ def revise(session: Session, post_id: uuid.UUID, *, caption: str | None = None, 
             except MakerError as e:
                 raise MakerError(f"slide {i + 1}: {e}") from e
         renderer = renderer or Renderer()
+        if refresh_theme:
+            for i, slide in enumerate(post.slides):
+                if i in specs or not slide.get("spec") or not slide.get("asset_id"):
+                    continue
+                asset = session.get(ContentAsset, uuid.UUID(slide["asset_id"]))
+                if asset and (asset.provenance or {}).get("theme") != renderer.theme:
+                    specs[i] = slide["spec"]
         slug = _slug(post.title)
         for i, spec in specs.items():
             data = renderer.render(spec, session=session)

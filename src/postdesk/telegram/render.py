@@ -212,7 +212,8 @@ def hold_buttons(session: Session, card: Card) -> dict:
 
 def hold_version(session: Session, card: Card) -> str:
     drafts_ = posts.drafts(session, card.id)
-    value = {"review": card.review, "drafts": [(str(p.id), str(p.updated_at)) for p in drafts_]}
+    value = {"review": card.review, "reason": card.stuck_reason,
+             "drafts": [(str(p.id), str(p.updated_at)) for p in drafts_]}
     return hashlib.sha256(json.dumps(value, sort_keys=True, default=str).encode()).hexdigest()[:12]
 
 
@@ -332,6 +333,15 @@ def drafts(session: Session, card: Card, *, buttons: bool = True) -> list[Out]:
 def on_hold(session: Session, card: Card, reason: str | None, *, buttons: bool = True) -> list[Out]:
     drafts_ = posts.drafts(session, card.id)
     review = card.review or {}
+    current_reason = reason or card.stuck_reason or ""
+    review_reason = str(review.get("why") or "")
+    # A later job failure can leave an older editor verdict on the card.
+    # Never present that verdict as the reason for the new hold.
+    if review_reason and current_reason and not (current_reason == review_reason
+                                                  or current_reason.startswith(review_reason + ":")):
+        blocks = [f"<b>On hold: {esc(card.title)}</b>", *md_blocks(current_reason),
+                  "The requested changes may not have been applied. The previous draft is still available."]
+        return messages(blocks, keyboard(card, [["rt"], ["rv"], ["bp", "dr"]]) if buttons else None)
     if not drafts_ or review.get("column") != "On hold":
         blocks = [f"<b>On hold: {esc(card.title)}</b>", *md_blocks(reason or card.stuck_reason or "")]
         return messages(blocks, hold_buttons(session, card) if buttons else None)

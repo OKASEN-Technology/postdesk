@@ -36,6 +36,10 @@ class RenderError(RuntimeError):
     """A spec the schema refuses, or a renderer that is missing, down or unhappy."""
 
 
+class RendererUnavailable(RenderError):
+    """A temporary renderer outage that can be retried by the job queue."""
+
+
 @lru_cache(maxsize=1)
 def schema() -> dict:
     return json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
@@ -142,7 +146,7 @@ class Renderer:
                                         params={"theme": theme} if theme else None)
             except (httpx.TimeoutException, httpx.NetworkError) as e:
                 if attempt == len(RETRY_DELAYS_S):
-                    raise RenderError(f"rendering a {spec['type']} slide failed: the renderer is temporarily "
+                    raise RendererUnavailable(f"rendering a {spec['type']} slide failed: the renderer is temporarily "
                                       f"unavailable ({type(e).__name__}). Please try again.") from e
             except httpx.HTTPError as e:
                 raise RenderError(f"rendering a {spec['type']} slide failed ({type(e).__name__}: {e})"[:500]) from e
@@ -150,7 +154,7 @@ class Renderer:
                 if resp.status_code not in TRANSIENT_STATUSES:
                     break
                 if attempt == len(RETRY_DELAYS_S):
-                    raise RenderError(f"rendering a {spec['type']} slide failed ({resp.status_code}): "
+                    raise RendererUnavailable(f"rendering a {spec['type']} slide failed ({resp.status_code}): "
                                       "the renderer is temporarily unavailable. Please try again.")
             time.sleep(RETRY_DELAYS_S[attempt])
         if resp.status_code != 200:

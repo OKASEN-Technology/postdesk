@@ -464,6 +464,16 @@ def revise(session: Session, card: Card, d: dict, *, renderer=None) -> Card:
         return card
     drafts = posts.drafts(session, card.id)
     patches, problems = valid_revision(d, drafts)
+    from postdesk.maker.run import needs_theme_refresh
+
+    theme = renderer.theme if renderer else config.theme.name
+    for draft in drafts:
+        if needs_theme_refresh(session, draft, theme):
+            patch = next((p for p in patches if p["id"] == str(draft.id)), None)
+            if patch is None:
+                patch = {"id": str(draft.id)}
+                patches.append(patch)
+            patch["refresh_theme"] = True
     if not patches:
         why = (d.get("reply") or "").strip() or "no change it could make"
         return stuck(session, card, f"the revision could not fix this with words alone: {why}"
@@ -472,7 +482,8 @@ def revise(session: Session, card: Card, d: dict, *, renderer=None) -> Card:
     for p in patches:
         try:
             maker.revise(session, uuid.UUID(p["id"]), caption=p.get("caption"), alt_texts=p.get("alt_texts"),
-                         slides=p.get("slides"), renderer=renderer, by=MAKER)
+                         slides=p.get("slides"), renderer=renderer, by=MAKER,
+                         refresh_theme=p.get("refresh_theme", False))
             applied += 1
         except (maker.MakerError, queue.QueueError, LookupError) as e:
             session.rollback()

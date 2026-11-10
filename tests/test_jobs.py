@@ -21,6 +21,7 @@ from postdesk.config import config
 from postdesk.db import session as db_session
 from postdesk.db.models import Card, Job
 from postdesk.main import create_app
+from postdesk.maker.render import RenderError, RendererUnavailable
 from tests import boardkit as kit
 
 
@@ -32,6 +33,11 @@ def _voice(monkeypatch):
 
 def _quiet(_m):
     pass
+
+
+def test_renderer_outage_retries_but_invalid_render_does_not():
+    assert jobs.is_transient(RendererUnavailable("gateway unavailable"))
+    assert not jobs.is_transient(RenderError("invalid slide"))
 
 
 def test_one_running_job_per_card(session):

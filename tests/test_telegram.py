@@ -407,6 +407,21 @@ def test_cannot_accept_held_review_when_telegram_cannot_send_photo(session, bot,
     assert card.column == "On hold"
 
 
+def test_failed_revision_reports_current_failure_and_invalidates_old_approval(session, bot, fake, paired):
+    card = _editor_hold(session)
+    handle(session, bot, tk.message("/review"))
+    old_button = fake.last()["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
+    transitions.stuck(session, card, "the revision job failed: renderer unavailable", actor="worker")
+    fake.clear()
+    handle(session, bot, tk.message("/review"))
+    assert "revision job failed" in "\n".join(fake.texts())
+    assert "previous draft" in "\n".join(fake.texts())
+    assert "ok" not in fake.buttons(fake.last())
+    handle(session, bot, tk.press(old_button))
+    assert card.column == "On hold"
+    assert "out of date" in fake.last()["text"]
+
+
 def _reply_target(session, bot, card) -> int:
     commands.say(session, bot, tk.CHAT, "about this card", card=card)
     return _sent_about(session, card)[-1].message_id

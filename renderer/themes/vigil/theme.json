@@ -1,0 +1,97 @@
+{
+  "name": "vigil",
+  "description": "Vigil brand mark for social posts.",
+  "palette": {
+    "paper": "#F5F1E8",
+    "deep": "#14312B",
+    "deepRaised": "#1C443B",
+    "rule": "#2F6657",
+    "accent": "#C9563C",
+    "accentLight": "#EE9A7E",
+    "highlight": "#E3B04B",
+    "ink": "#232B28",
+    "sub": "#5A6661",
+    "stone": "#CEC6B3",
+    "muted": "#98A49E",
+    "mutedLight": "#CDD6D1",
+    "up": "#7ED09A",
+    "down": "#F09A8C"
+  },
+  "roles": {
+    "serif": "Fraunces",
+    "sans": "IBM Plex Sans",
+    "mono": "IBM Plex Mono"
+  },
+  "fonts": [
+    {
+      "family": "Fraunces",
+      "weight": 400,
+      "style": "normal",
+      "file": "../default/fonts/Fraunces-Regular.ttf"
+    },
+    {
+      "family": "Fraunces",
+      "weight": 500,
+      "style": "normal",
+      "file": "../default/fonts/Fraunces-Medium.ttf"
+    },
+    {
+      "family": "Fraunces",
+      "weight": 400,
+      "style": "italic",
+      "file": "../default/fonts/Fraunces-RegularItalic.ttf"
+    },
+    {
+      "family": "IBM Plex Sans",
+      "weight": 400,
+      "style": "normal",
+      "file": "../default/fonts/IBMPlexSans-Regular.ttf"
+    },
+    {
+      "family": "IBM Plex Sans",
+      "weight": 500,
+      "style": "normal",
+      "file": "../default/fonts/IBMPlexSans-Medium.ttf"
+    },
+    {
+      "family": "IBM Plex Sans",
+      "weight": 600,
+      "style": "normal",
+      "file": "../default/fonts/IBMPlexSans-SemiBold.ttf"
+    },
+    {
+      "family": "IBM Plex Mono",
+      "weight": 400,
+      "style": "normal",
+      "file": "../default/fonts/IBMPlexMono-Regular.ttf"
+    },
+    {
+      "family": "IBM Plex Mono",
+      "weight": 500,
+      "style": "normal",
+      "file": "../default/fonts/IBMPlexMono-Medium.ttf"
+    },
+    {
+      "family": "IBM Plex Mono",
+      "weight": 600,
+      "style": "normal",
+      "file": "../default/fonts/IBMPlexMono-SemiBold.ttf"
+    }
+  ],
+  "wordmark": {
+    "mark": "wordmark.svg",
+    "text": "VIGIL",
+    "markWidth": 30,
+    "markHeight": 30
+  },
+  "handle": "@vigilfoundry",
+  "site": "vigilfoundry.com",
+  "ctaLine": "",
+  "strings": {
+    "swipe": "Swipe",
+    "linkInBio": "",
+    "newEntry": "NEW",
+    "band": "range",
+    "level": "now"
+  }
+}

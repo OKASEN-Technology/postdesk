@@ -429,6 +429,18 @@ def test_revise_re_renders_only_the_changed_slide(session):
         maker.revise(session, post.id, slides=[{"index": 1, "fields": {"body": "x"}}], renderer=_renderer())
 
 
+def test_theme_change_rerenders_each_stored_slide_during_revision(session):
+    post, _ = maker.make(session, _facts(), "article", call=_fake_call(), renderer=_renderer(), now=NOW)
+    rendered = []
+    renderer = _renderer(rendered)
+    renderer.theme = "vigil"
+    assert make_mod.needs_theme_refresh(session, post, "vigil")
+    out = maker.revise(session, post.id, slides=[{"index": 1, "fields": {"headline": "Cold dough waits"}}],
+                       renderer=renderer, refresh_theme=True)
+    assert len(rendered) == len(post.slides)
+    assert out.slides[1]["spec"]["headline"] == "Cold dough waits"
+
+
 # ---------------------------------------------------------------- the API and the CLI
 
 
