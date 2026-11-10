@@ -337,8 +337,8 @@ def on_hold(session: Session, card: Card, reason: str | None, *, buttons: bool =
     review_reason = str(review.get("why") or "")
     # A later job failure can leave an older editor verdict on the card.
     # Never present that verdict as the reason for the new hold.
-    if review_reason and current_reason and not (current_reason == review_reason
-                                                  or current_reason.startswith(review_reason + ":")):
+    if drafts_ and review.get("column") == "On hold" and review_reason and current_reason and not (
+            current_reason == review_reason or current_reason.startswith(review_reason + ":")):
         blocks = [f"<b>On hold: {esc(card.title)}</b>", *md_blocks(current_reason),
                   "The requested changes may not have been applied. The previous draft is still available."]
         return messages(blocks, keyboard(card, [["rt"], ["rv"], ["bp", "dr"]]) if buttons else None)
