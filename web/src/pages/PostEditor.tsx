@@ -4,7 +4,7 @@ import { api, errorText, type BrandItem, type Config, type Lint, type Post, type
 import { fmt, fromLocalInput, insidePublisherHours, toLocalInput } from "../time";
 import { Badge, CARD, DANGER, ErrorNote, INPUT, LABEL, PRIMARY, SECONDARY } from "../ui";
 
-const MAX_CAPTION = 2200;
+const MAX_CAPTION = 280;
 const MORE_CUT = 125;
 /** The fields that read better in a box than on a line. */
 const LONG_FIELDS = new Set(["body", "text", "line", "sub", "figure_sub", "line1", "line2"]);
@@ -37,15 +37,19 @@ function SlideWords({ words, onChange }: { words: Record<string, string>; onChan
 export function CaptionChecks({ caption, config }: { caption: string; config: Config }) {
   const [lint, setLint] = useState<Lint | null>(null);
   useEffect(() => {
-    const t = setTimeout(() => api.lint(caption).then(setLint).catch(() => setLint(null)), 300);
-    return () => clearTimeout(t);
+    let cancelled = false;
+    setLint(null);
+    const t = setTimeout(() => api.lint(caption).then((result) => { if (!cancelled) setLint(result); }).catch(() => { if (!cancelled) setLint(null); }), 300);
+    return () => { cancelled = true; clearTimeout(t); };
   }, [caption]);
   return (
     <div className="mt-1 space-y-2 text-xs">
       <p className="font-mono text-[11px] text-ink-3">
-        <span className={caption.length > MAX_CAPTION ? "text-clay" : ""}>{caption.length} / {MAX_CAPTION}</span>
+        <span className={Array.from(caption).length > MAX_CAPTION ? "text-clay" : ""}>{lint?.characters ?? Array.from(caption).length} / {MAX_CAPTION} characters</span>
+        {lint && <> · <span className={lint.x_weighted_characters > MAX_CAPTION ? "text-clay" : ""}>{lint.x_weighted_characters} / {MAX_CAPTION} on X</span></>}
         {lint && <> · <span className={lint.hashtags > config.max_hashtags ? "text-sun" : ""}>{lint.hashtags} hashtag{lint.hashtags === 1 ? "" : "s"}</span></>}
       </p>
+      <p>Instagram and X share a 280 character limit, including spaces, links and hashtags.</p>
       {lint?.errors.map((e) => <p key={e} className="text-clay">{e}. Publishing would fail.</p>)}
       {lint?.warnings.map((w) => <p key={w} className="text-sun">{w}</p>)}
       {/https?:\/\/|www\./i.test(caption) && <p className="text-sun">Links are not clickable in Instagram captions.</p>}

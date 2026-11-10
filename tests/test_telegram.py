@@ -874,7 +874,8 @@ def test_schedule_both_and_unschedule_from_telegram(session, bot, fake, paired, 
 def test_long_shared_caption_is_edited_and_reviewed_before_scheduling(session, bot, fake, paired):
     card = _awaiting(session)
     feed = next(p for p in posts.drafts(session, card.id) if p.kind != "story")
-    queue.update_post(session, feed.id, caption="a" * 500)
+    feed.caption = "a" * 500  # Existing draft from before the shared limit.
+    session.commit()
     handle(session, bot, tk.press(render.data("bx", card.id)))
     assert card.column == "Awaiting approval"
     assert all(p.status == "draft" for p in posts.for_card(session, card.id))

@@ -30,9 +30,9 @@ source's facts.
 
 ## Caption (feed posts only; a Story has none)
 
-A hook first (one plain sentence, under about 125 characters), then two to
-four short paragraphs, one call to action, the hashtags from the account's
-set at the end. Keep the maker's hashtags unless a note says otherwise.
+Keep captions at most 280 characters total for Instagram and X, including spaces, links and hashtags.
+X counts some characters differently, so leave room. Use a concise hook and at most one call to action.
+Keep the maker's hashtags unless a note says otherwise.
 
 ## Alt text
 

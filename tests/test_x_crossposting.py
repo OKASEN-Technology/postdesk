@@ -49,9 +49,8 @@ def test_x_limits_and_duplicate_prevention(session, monkeypatch):
     too_many = _carousel(session, n=5)
     with pytest.raises(queue.QueueError, match="four images"):
         queue.approve(session, too_many.id, publish_at=when, approved_by="admin", crosspost_x=True)
-    long = _carousel(session, caption="x" * 281)
     with pytest.raises(queue.QueueError, match="280"):
-        queue.approve(session, long.id, publish_at=when, approved_by="admin", crosspost_x=True)
+        _carousel(session, caption="x" * 281)
     post = _carousel(session)
     queue.approve(session, post.id, publish_at=when, approved_by="admin", crosspost_x=True)
     copy = session.scalars(select(SocialPost).where(SocialPost.channel == "x")).one()

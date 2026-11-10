@@ -42,7 +42,8 @@ class QueueError(ValueError):
     """Invalid post, or a transition the post's status does not allow."""
 
 
-def _validate(session: Session, kind: str, caption: str, slides: list[dict]) -> None:
+def _validate(session: Session, kind: str, caption: str, slides: list[dict], *,
+              allow_legacy_caption: bool = False) -> None:
     if kind not in KINDS:
         raise QueueError(f"kind must be one of {', '.join(KINDS)}")
     n = len(slides)
@@ -54,7 +55,7 @@ def _validate(session: Session, kind: str, caption: str, slides: list[dict]) -> 
         raise QueueError(f"a carousel takes {ig.CAROUSEL_MIN}–{ig.CAROUSEL_MAX} images ({n} given)")
     if kind == "story" and caption:
         raise QueueError("stories have no caption")
-    errors, _ = ig.lint_caption(caption)
+    errors, _ = ig.lint_caption(caption, enforce_shared_limit=not allow_legacy_caption)
     if errors:
         raise QueueError("; ".join(errors))
     for s in slides:
@@ -155,7 +156,7 @@ def update_post(
             raise QueueError(f"{len(alt_texts)} alt texts for {len(slides)} slides")
         slides = [{**s, "alt_text": a.strip()} for s, a in zip(slides, alt_texts, strict=True)]
     new_caption = post.caption if caption is None else caption.strip()
-    _validate(session, post.kind, new_caption, slides)
+    _validate(session, post.kind, new_caption, slides, allow_legacy_caption=new_caption == post.caption)
     post.caption = new_caption
     post.slides = slides
     if title is not None:
@@ -315,6 +316,9 @@ def publish_due(session: Session, graph: ig.Graph, *, now: datetime | None = Non
         attempted.append(post)
         log(f"{post.title} ({post.kind}, {post.id})")
         try:
+            errors, _ = ig.lint_caption(post.caption)
+            if errors:
+                raise ig.InstagramError("; ".join(errors))
             items = []
             for s in post.slides:
                 asset = session.get(ContentAsset, uuid.UUID(s["asset_id"]))

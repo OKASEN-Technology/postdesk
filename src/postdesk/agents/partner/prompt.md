@@ -111,5 +111,5 @@ Keep it as short as the post allows.
 ## The guidance (for the maker)
 
 Instructions, plain text, under 2,000 characters: the angle; the hook line;
-for each slide, what to lead with; the caption's shape (a hook, two or three
-short paragraphs, one ask); what to avoid. Numbers only from the source.
+for each slide, what to lead with; a concise caption of at most 280 characters including hashtags,
+spaces and links for Instagram and X; what to avoid. Numbers only from the source.

@@ -175,6 +175,9 @@ def test_suggest_times_and_lint(admin):
     caption = "A game-changer " + " ".join(f"#t{i}" for i in range(7))
     lint = admin.post("/api/posts/lint-caption", json={"caption": caption})
     assert lint.json()["hashtags"] == 7 and len(lint.json()["warnings"]) == 2 and lint.json()["errors"] == []
+    counts = admin.post("/api/posts/lint-caption", json={"caption": "😀" * 141}).json()
+    assert counts["characters"] == 141 and counts["x_weighted_characters"] == 282
+    assert counts["max_characters"] == 280 and counts["errors"]
 
 
 def test_config_and_health(admin):

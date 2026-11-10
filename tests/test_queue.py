@@ -235,3 +235,19 @@ def test_publisher_hours_are_local():
     assert queue.within_publisher_hours(datetime(2031, 7, 1, 5, 30, tzinfo=UTC))
     nxt = queue.next_publisher_window(datetime(2031, 3, 3, 22, 0, tzinfo=UTC))
     assert nxt == _london(2031, 3, 4, 6)
+
+
+def test_shared_caption_limit_and_legacy_draft(session):
+    post = _carousel(session, caption="x" * 280)
+    with pytest.raises(queue.QueueError, match="280"):
+        queue.update_post(session, post.id, caption="x" * 281)
+    with pytest.raises(queue.QueueError, match="on X"):
+        queue.update_post(session, post.id, caption="😀" * 141)
+    post.caption = "x" * 281  # A draft created before the shared limit.
+    session.commit()
+    assert queue.update_post(session, post.id, title="New title").title == "New title"
+    with pytest.raises(queue.QueueError, match="280"):
+        queue.approve(session, post.id, publish_at=datetime.now(UTC) + timedelta(hours=1), approved_by="admin")
+    queue.update_post(session, post.id, caption="Shorter caption")
+    assert queue.approve(session, post.id, publish_at=datetime.now(UTC) + timedelta(hours=1),
+                         approved_by="admin").status == "approved"

@@ -153,7 +153,11 @@ def lint_caption(body: dict) -> CaptionLint:
     """The same checks the queue applies, for the editor to show as you type."""
     caption = str(body.get("caption", ""))
     errors, warnings = ig.lint_caption(caption)
-    return CaptionLint(errors=errors, warnings=warnings, hashtags=len(ig.hashtags(caption)))
+    from twitter_text import parse_tweet
+
+    return CaptionLint(errors=errors, warnings=warnings, hashtags=len(ig.hashtags(caption)),
+                       characters=len(caption), x_weighted_characters=parse_tweet(caption).weightedLength,
+                       max_characters=ig.SHARED_CAPTION_MAX)
 
 
 @router.get("/{post_id}", response_model=PostItem)

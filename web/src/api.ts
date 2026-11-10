@@ -33,7 +33,7 @@ export interface Config {
 
 export interface AuthStatus { configured: boolean; authenticated: boolean }
 export interface Asset { id: string; url: string; public_url: string; width: number; height: number }
-export interface Lint { errors: string[]; warnings: string[]; hashtags: number }
+export interface Lint { errors: string[]; warnings: string[]; hashtags: number; characters: number; x_weighted_characters: number; max_characters: number }
 
 // ---------------------------------------------------------------- the board
 

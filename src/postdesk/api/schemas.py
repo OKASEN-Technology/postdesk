@@ -99,6 +99,9 @@ class CaptionLint(BaseModel):
     errors: list[str]
     warnings: list[str]
     hashtags: int
+    characters: int
+    x_weighted_characters: int
+    max_characters: int
 
 
 class AssetOut(BaseModel):
