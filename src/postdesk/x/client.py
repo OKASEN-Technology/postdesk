@@ -32,6 +32,8 @@ class XCredentials:
 
 class XClient:
     def __init__(self, credentials: XCredentials, *, client: httpx.Client | None = None):
+        self._secrets = (credentials.api_key, credentials.api_secret,
+                         credentials.access_token, credentials.access_secret)
         self.signer = OAuthClient(credentials.api_key, client_secret=credentials.api_secret,
                                   resource_owner_key=credentials.access_token,
                                   resource_owner_secret=credentials.access_secret)
@@ -50,9 +52,22 @@ class XClient:
         if not response.is_success:
             # A 5xx can be returned after the request was accepted.
             uncertain = publish and response.status_code >= 500
-            raise XError(f"X returned HTTP {response.status_code}. " +
-                         ("Check X before retrying; the post may have been published."
-                          if uncertain else "Check credentials, access, credits, and post content."),
+            operation = "image upload" if path == "/2/media/upload" else "post creation" if publish else "account check"
+            detail = ""
+            try:
+                payload = response.json()
+                if isinstance(payload, dict):
+                    parts = [str(payload[k]) for k in ("title", "detail") if isinstance(payload.get(k), str)]
+                    detail = ": ".join(parts)
+                    for secret in sorted(self._secrets, key=len, reverse=True):
+                        if secret:
+                            detail = detail.replace(secret, "[redacted]")
+                    detail = " ".join(detail.split())[:500]
+            except ValueError:
+                pass
+            suffix = ("Check X before retrying; the post may have been published." if uncertain else
+                      detail or "Check credentials, access, credits, and post content.")
+            raise XError(f"X returned HTTP {response.status_code} during {operation}. {suffix}",
                          uncertain=uncertain)
         try:
             data = response.json()

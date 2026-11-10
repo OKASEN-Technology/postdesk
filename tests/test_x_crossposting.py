@@ -102,3 +102,16 @@ def test_only_published_instagram_can_be_recovered_to_x(session, monkeypatch):
     post = _carousel(session)
     with pytest.raises(queue.QueueError, match="published Instagram"):
         queue.crosspost_published_to_x(session, post.id, approved_by="admin")
+
+
+def test_x_error_explains_operation_and_redacts_credentials():
+    def handler(request):
+        return httpx.Response(403, json={"title": "Forbidden", "detail": "Access denied for token-secret"})
+    client = XClient(XCredentials("key", "secret", "token", "token-secret"),
+                     client=httpx.Client(transport=httpx.MockTransport(handler)))
+    with pytest.raises(XError) as error:
+        client.upload_image(b"picture")
+    assert "image upload" in str(error.value)
+    assert "Forbidden" in str(error.value)
+    assert "token-secret" not in str(error.value)
+    assert not error.value.uncertain

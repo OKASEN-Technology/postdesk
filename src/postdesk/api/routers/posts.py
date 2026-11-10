@@ -242,6 +242,29 @@ def approve_post(post_id: uuid.UUID, body: PostApprove, actor: str = Depends(req
     return _then_board(result, session, actor)
 
 
+
+@router.post("/{post_id}/x-upload-check")
+def x_upload_check(post_id: uuid.UUID, session: Session = Depends(get_session)) -> dict:
+    """Test X media access with this post's first image; never creates a post."""
+    from postdesk import storage
+    from postdesk.db.models import ContentAsset
+    from postdesk.x.client import XClient, XError
+    from postdesk.x.credentials import read
+
+    post = session.get(SocialPost, post_id)
+    if post is None or post.channel != "instagram" or not post.slides:
+        raise HTTPException(status_code=404, detail="Instagram image not found.")
+    asset = session.get(ContentAsset, uuid.UUID(str(post.slides[0]["asset_id"])))
+    try:
+        auth = read(session)
+        if auth is None or asset is None:
+            raise HTTPException(status_code=409, detail="X connection or image is unavailable.")
+        XClient(auth).upload_image(storage.asset_bytes(asset))
+    except (XError, ValueError, OSError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, "detail": "X accepted the image; no post was created."}
+
+
 @router.post("/{post_id}/crosspost-x", response_model=PostItem)
 def crosspost_published_x(post_id: uuid.UUID, actor: str = Depends(require_auth),
                           session: Session = Depends(get_session)) -> PostItem:
