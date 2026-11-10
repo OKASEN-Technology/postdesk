@@ -94,14 +94,16 @@ def render_spec(spec: dict, session: Session | None = None) -> dict:
     and fit, a stored asset's bytes inlined, chrome and provenance keys
     dropped."""
     out = {k: v for k, v in spec.items() if k not in ("theme", "provenance")}
-    img = out.get("image")
-    if isinstance(img, dict):
-        url = img.get("url")
-        if img.get("asset_id") and session is not None:
-            url = _data_uri(session, img["asset_id"])
-        elif img.get("asset_id") and not url:
-            raise RenderError("an image backed by a stored asset needs a database session to render")
-        out["image"] = {k: v for k, v in {"url": url, "credit": img.get("credit"), "fit": img.get("fit")}.items() if v}
+    for field in ("image", "background"):
+        img = out.get(field)
+        if isinstance(img, dict):
+            url = img.get("url")
+            if img.get("asset_id") and session is not None:
+                url = _data_uri(session, img["asset_id"])
+            elif img.get("asset_id") and not url:
+                raise RenderError("an image backed by a stored asset needs a database session to render")
+            out[field] = {k: v for k, v in
+                          {"url": url, "credit": img.get("credit"), "fit": img.get("fit")}.items() if v}
     return out
 
 

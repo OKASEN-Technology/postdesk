@@ -162,6 +162,7 @@ ACTIONS = {
     "bp": "Back to the partner",
     "dr": "Drop",
     "ok": "Approve as is",
+    "im": "Change an image",
 }
 
 
@@ -198,7 +199,7 @@ def schedule_buttons(card: Card, when: str, *, retry_x: bool = False) -> dict:
     if retry_x:
         return keyboard(card, [[("sc", f"Retry X · {when}")], [("pk", "X · choose time")], ["hd"]])
     buttons = keyboard(card, [[("sc", f"Instagram · {when}")], [("bx", f"Instagram + X · {when}")],
-                              [("pk", "Instagram · choose time"), ("bt", "Both · choose time")], ["rt", "hd"]])
+                              [("pk", "Instagram · choose time"), ("bt", "Both · choose time")], ["im"], ["rt", "hd"]])
     buttons["inline_keyboard"].insert(1, [{"text": "Preview Instagram & X", "url": preview_url(card)}])
     return buttons
 
@@ -212,7 +213,7 @@ def hold_buttons(session: Session, card: Card) -> dict:
     if any(p.status == "failed" for p in rows):
         return keyboard(card, [["bd"], ["dr"]])
     if posts.drafts(session, card.id):
-        return keyboard(card, [["rv"], ["bp", "dr"]])
+        return keyboard(card, [["im"], ["rv"], ["bp", "dr"]])
     return keyboard(card, [["bp"], ["dr"]])
 
 
@@ -349,7 +350,7 @@ def on_hold(session: Session, card: Card, reason: str | None, *, buttons: bool =
             current_reason == review_reason or current_reason.startswith(review_reason + ":")):
         blocks = [f"<b>On hold: {esc(card.title)}</b>", *md_blocks(current_reason),
                   "The requested changes may not have been applied. The previous draft is still available."]
-        return messages(blocks, keyboard(card, [["rt"], ["rv"], ["bp", "dr"]]) if buttons else None)
+        return messages(blocks, keyboard(card, [["im"], ["rt"], ["rv"], ["bp", "dr"]]) if buttons else None)
     if not drafts_ or review.get("column") != "On hold":
         blocks = [f"<b>On hold: {esc(card.title)}</b>", *md_blocks(reason or card.stuck_reason or "")]
         return messages(blocks, hold_buttons(session, card) if buttons else None)
@@ -392,7 +393,7 @@ def on_hold(session: Session, card: Card, reason: str | None, *, buttons: bool =
     blocks.append("<i>Review the images and notes. Approving keeps this as a draft; scheduling is a separate step.</i>")
     controls = None
     if buttons:
-        controls = keyboard(card, [["rt"], ["bp", "dr"]])
+        controls = keyboard(card, [["im"], ["rt"], ["bp", "dr"]])
         if complete:
             controls["inline_keyboard"].insert(0, [{"text": ACTIONS["ok"],
                 "callback_data": f"{data('ok', card.id)}:{hold_version(session, card)}"}])

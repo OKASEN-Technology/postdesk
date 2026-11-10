@@ -287,7 +287,7 @@ def test_awaiting_approval_sends_the_slides_caption_alt_text_checks_and_schedule
     assert f"Ready to schedule: {c.title}" in "".join(fake.texts())
     assert "<blockquote expandable><b>Alt text</b>" in "".join(fake.texts())
     assert "✓ voice" in "".join(fake.texts()) and "Recommended time" in msg["text"]
-    assert fake.buttons(msg) == ["sc", "bx", "pk", "bt", "rt", "hd"]
+    assert fake.buttons(msg) == ["sc", "bx", "pk", "bt", "im", "rt", "hd"]
     assert msg["reply_markup"]["inline_keyboard"][0][0]["text"].startswith("Instagram · ")
 
 
@@ -347,7 +347,7 @@ def test_hold_and_drop(session, bot, fake, paired):
     handle(session, bot, tk.press(render.data("hd", c.id)))
     session.refresh(c)
     assert c.column == "On hold" and c.stuck_reason == "held from Telegram"
-    assert fake.buttons(fake.last()) == ["rv", "bp", "dr"]
+    assert fake.buttons(fake.last()) == ["im", "rv", "bp", "dr"]
     d = _briefed(session)
     handle(session, bot, tk.message("/hold waiting on the photo", reply_to=_reply_target(session, bot, d)))
     session.refresh(d)
@@ -368,6 +368,58 @@ def _editor_hold(session):
     return card
 
 
+def test_telegram_upload_replaces_chosen_slide_and_returns_it_for_review(session, bot, fake, paired, monkeypatch):
+    card = _editor_hold(session)
+    monkeypatch.setattr(commands, "library_choices", lambda *_: [])
+    commands.choose_slide(session, bot, tk.CHAT, card)
+    choice_message = _sent_about(session, card)[-1].message_id
+    choice = fake.last()["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
+    deps = commands.Deps(renderer=kit._renderer())
+    handle(session, bot, tk.press(choice, message_id=choice_message), renderer=deps.renderer)
+    upload_message = _sent_about(session, card)[-1].message_id
+    upload = fake.last()["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
+    handle(session, bot, tk.press(upload, message_id=upload_message), renderer=deps.renderer)
+    prompt = _sent_about(session, card)[-1].message_id
+    handle(session, bot, tk.photo(None, reply_to=prompt), renderer=deps.renderer)
+    session.refresh(card)
+    assert card.column == "In review"
+    assert "review" in _jobs(session, card)
+    assert fake.of("sendPhoto")[-1]["caption"].startswith("Updated slide")
+    assert any("asset_id" in (s.get("spec", {}).get("image") or {})
+               for p in posts.drafts(session, card.id) for s in p.slides)
+    assert not any(p.status == "approved" for p in posts.for_card(session, card.id))
+
+
+def test_telegram_offers_brand_images_and_rejects_old_choices(session, bot, fake, paired, monkeypatch):
+    import io
+
+    card = _editor_hold(session)
+    item = {"key": "vigil/device.jpg", "name": "device.jpg", "url": "https://example.com/device.jpg",
+            "size": len(fake.photo), "type": "image", "enabled": True}
+    monkeypatch.setattr(commands, "library_choices", lambda *_: [item])
+    monkeypatch.setattr(commands.brand_library, "read", lambda *_: {"bucket": "test"})
+
+    class FakeR2:
+        def get_object(self, **_):
+            return {"Body": io.BytesIO(fake.photo)}
+
+    monkeypatch.setattr(commands.brand_library, "_connection", lambda *_: FakeR2())
+    deps = commands.Deps(renderer=kit._renderer())
+    commands.choose_slide(session, bot, tk.CHAT, card)
+    choice_message = _sent_about(session, card)[-1].message_id
+    choice = fake.last()["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
+    handle(session, bot, tk.press(choice, message_id=choice_message), renderer=deps.renderer)
+    photo = fake.of("sendPhoto")[-1]
+    assert photo["photo"] == item["url"]
+    pick = photo["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
+    photo_message = _sent_about(session, card)[-2].message_id
+    handle(session, bot, tk.press(pick, message_id=photo_message), renderer=deps.renderer)
+    session.refresh(card)
+    assert card.column == "In review"
+    handle(session, bot, tk.press(pick, message_id=photo_message), renderer=deps.renderer)
+    assert "no longer a draft" in fake.last()["text"]
+
+
 def test_held_review_shows_images_notes_and_approval_without_scheduling(session, bot, fake, paired):
     card = _editor_hold(session)
     fake.clear()
@@ -377,13 +429,13 @@ def test_held_review_shows_images_notes_and_approval_without_scheduling(session,
     text = "\n".join(fake.texts())
     assert "The cover needs a different image" in text and "caption" in text
     assert "scheduling is a separate step" in text
-    assert fake.buttons(message) == ["ok", "rt", "bp", "dr"]
+    assert fake.buttons(message) == ["ok", "im", "rt", "bp", "dr"]
     data = message["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
     handle(session, bot, tk.press(data))
     session.refresh(card)
     assert card.column == "Awaiting approval"
     assert all(p.status == "draft" for p in posts.drafts(session, card.id))
-    assert fake.buttons(fake.last()) == ["sc", "bx", "pk", "bt", "rt", "hd"]
+    assert fake.buttons(fake.last()) == ["sc", "bx", "pk", "bt", "im", "rt", "hd"]
 
 
 def test_held_review_can_be_reopened_and_rejects_stale_or_unpaired_approval(session, bot, fake, paired):
@@ -464,7 +516,7 @@ def test_a_failed_publish_is_held_and_back_to_draft_puts_it_back(session, bot, f
     handle(session, bot, tk.press(render.data("bd", c.id)))
     session.refresh(c)
     assert c.column == "Awaiting approval" and {p.status for p in posts.for_card(session, c.id)} == {"draft"}
-    assert fake.buttons(fake.last()) == ["sc", "bx", "pk", "bt", "rt", "hd"]
+    assert fake.buttons(fake.last()) == ["sc", "bx", "pk", "bt", "im", "rt", "hd"]
 
 
 def test_it_went_live_and_a_week_later_the_numbers(session, bot, fake, paired):

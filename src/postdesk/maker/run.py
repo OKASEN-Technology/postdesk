@@ -48,8 +48,7 @@ def resolve_images(session: Session, facts: Facts, *, by: str = AGENT) -> None:
 
 
 def _images_in(spec: dict) -> list[dict]:
-    img = spec.get("image")
-    return [img] if isinstance(img, dict) else []
+    return [spec[field] for field in ("image", "background") if isinstance(spec.get(field), dict)]
 
 
 def provenance(spec: dict, template: str, theme: str) -> dict:

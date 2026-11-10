@@ -16,7 +16,9 @@ else the bot asks you to reply to the card's message.
 
 from __future__ import annotations
 
+import hashlib
 import re
+import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
@@ -24,7 +26,7 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from postdesk import control, queue
+from postdesk import brand_library, control, instagram, queue, storage
 from postdesk.board import actions, cards, posts, transitions
 from postdesk.board.cards import BoardError
 from postdesk.config import config
@@ -233,7 +235,7 @@ def handle(session: Session, bot: Bot, update: dict, deps: Deps | None = None) -
 def message(session: Session, bot: Bot, chat_id: str, msg: dict, actor: str, deps: Deps) -> None:
     try:
         if msg.get("photo"):
-            photo(session, bot, chat_id, msg, actor)
+            photo(session, bot, chat_id, msg, actor, deps)
             return
         text = msg.get("text") or ""
         cmd = command_of(text)
@@ -277,10 +279,19 @@ def free_text(session: Session, bot: Bot, chat_id: str, msg: dict, text: str, ac
             + (" The partner is answering." if asked else ""), card=card)
 
 
-def photo(session: Session, bot: Bot, chat_id: str, msg: dict, actor: str) -> None:
+def photo(session: Session, bot: Bot, chat_id: str, msg: dict, actor: str, deps: Deps | None = None) -> None:
     if not msg.get("reply_to_message"):
         raise Refused("Send the photo as a reply to the card's message, so I know which post it is for.")
-    card, _ = target(session, chat_id, msg, "comment")
+    card, purpose = target(session, chat_id, msg, "comment")
+    if purpose.startswith("image:"):
+        _, post_id, index, version = purpose.split(":")
+        post, slide = image_target(session, card, post_id, index, version)
+        biggest = max(msg["photo"], key=lambda p: p.get("file_size") or p.get("width", 0))
+        if biggest.get("file_size", 0) > storage.MAX_IMAGE_BYTES:
+            raise Refused("That image is too large. Send a photo under 10 MB.")
+        replace_image(session, bot, chat_id, card, post, slide, bot.get_file(biggest["file_id"]), actor,
+                      "Telegram upload", deps_renderer=deps.renderer if deps else None)
+        return
     note = (msg.get("caption") or "").strip()
     if not note:
         raise Refused("Say where the photo is from in its caption (\"Photo: Jo Baker, mine to use\"), so it can be "
@@ -292,6 +303,141 @@ def photo(session: Session, bot: Bot, chat_id: str, msg: dict, actor: str) -> No
     say(session, bot, chat_id, f"Attached to <b>{esc(card.title)}</b> with your note. "
         + ("The partner will judge it." if card.column in transitions.PARTNER_COLUMNS else
            "It is on the card; send it back to the partner to use it."), card=card)
+
+
+def image_version(slide: dict) -> str:
+    return hashlib.sha256(str(slide.get("asset_id") or "").encode()).hexdigest()[:8]
+
+
+def image_field(slide: dict) -> str | None:
+    from postdesk.maker.render import schema
+    spec = slide.get("spec") or {}
+    fields = schema()["$defs"].get(spec.get("type"), {}).get("properties", {})
+    return next((field for field in ("image", "background") if field in fields), None)
+
+
+def image_target(session: Session, card: Card, post_id: str, index: str, version: str):
+    try:
+        post = session.get(SocialPost, uuid.UUID(hex=post_id))
+        i = int(index)
+    except (ValueError, TypeError):
+        raise Refused("That image choice is no longer valid. Open the card and choose again.") from None
+    if (card.column not in ("On hold", "Awaiting approval") or post is None or post.card_id != card.id
+            or post.status != "draft" or post.channel != "instagram" or not 0 <= i < len(post.slides)
+            or image_version(post.slides[i]) != version or not image_field(post.slides[i])):
+        raise Refused("That slide changed or is no longer a draft. Open the card and choose again.")
+    return post, i
+
+
+def choose_slide(session: Session, bot: Bot, chat_id: str, card: Card) -> None:
+    if card.column not in ("On hold", "Awaiting approval"):
+        raise Refused("Open a held post or draft awaiting approval to change its image.")
+    rows = []
+    for post in posts.drafts(session, card.id):
+        if post.channel != "instagram":
+            continue
+        for i, slide in enumerate(post.slides):
+            if image_field(slide):
+                label = "Story" if post.kind == "story" else "Post"
+                rows.append([{"text": f"{label} · slide {i + 1}",
+                              "callback_data": f"is:{post.id.hex}:{i}:{image_version(slide)}"}])
+    if not rows:
+        raise Refused("These drafts don't have a slide layout that supports an image.")
+    say(session, bot, chat_id, "<b>Change an image</b>\nChoose the slide or Story to update.", card=card,
+        buttons={"inline_keyboard": rows})
+
+
+def library_choices(session: Session, card: Card) -> list[dict]:
+    items = brand_library.available(session)
+    selected = brand_library.select_for_card(items, f"{card.title} {card.body_md or ''}",
+                                             limit=brand_library.MAX_OBJECTS)
+    keys = {"brand-" + hashlib.sha256(x["key"].encode()).hexdigest()[:16]: x for x in items
+            if x.get("enabled") and x.get("type") == "image"}
+    return [keys[x["key"]] for x in selected if x["key"] in keys]
+
+
+def image_choices(session: Session, bot: Bot, chat_id: str, card: Card, post: SocialPost, i: int, page: int) -> None:
+    library_error = False
+    try:
+        choices = library_choices(session, card)
+    except ValueError:
+        choices, library_error = [], True
+    version = image_version(post.slides[i])
+    prefix = f"{post.id.hex}:{i}:{version}"
+    page = max(0, page)
+    page_items = choices[page * 4:(page + 1) * 4]
+    say(session, bot, chat_id, f"<b>{'Story' if post.kind == 'story' else 'Post'} · slide {i + 1}</b>\n"
+        + ("Brand images are unavailable right now. You can still upload a photo." if library_error else
+           "Tap an image below, or upload your own." if page_items else
+           "No more brand images found. You can upload your own."), card=card)
+    shown = 0
+    for item in page_items:
+        key = hashlib.sha256(item["key"].encode()).hexdigest()[:8]
+        try:
+            msg = bot.send_photo(chat_id, item["url"], caption=esc(item["name"][:200]),
+                                 reply_markup={"inline_keyboard": [[{"text": "Use this image",
+                                     "callback_data": f"ic:{prefix}:{key}"}]]})
+            remember(session, chat_id, msg["message_id"], card)
+            session.commit()
+            shown += 1
+        except TelegramError:
+            continue
+    rows = [[{"text": "Upload a photo", "callback_data": f"iu:{prefix}"}]]
+    nav = []
+    if page:
+        nav.append({"text": "Previous", "callback_data": f"in:{prefix}:{page - 1}"})
+    if (page + 1) * 4 < len(choices):
+        nav.append({"text": "More images", "callback_data": f"in:{prefix}:{page + 1}"})
+    if nav:
+        rows.append(nav)
+    rows.append([{"text": "Choose another slide", "callback_data": render.data("im", card.id)}])
+    prompt = "Choose an option:"
+    if page_items and not shown:
+        prompt = "These images couldn't be previewed in Telegram. Try more images or upload a photo."
+    say(session, bot, chat_id, prompt, card=card, buttons={"inline_keyboard": rows})
+
+
+def replace_image(session: Session, bot: Bot, chat_id: str, card: Card, post: SocialPost, i: int, data: bytes,
+                  actor: str, source: str, deps_renderer=None) -> None:
+    from postdesk.maker import render as renderer_module
+    from postdesk.maker.run import provenance
+    if not data or len(data) > storage.MAX_IMAGE_BYTES:
+        raise Refused("That image is empty or exceeds 10 MB. Choose another image.")
+    version = image_version(post.slides[i])
+    try:
+        jpeg, _ = instagram.to_jpeg_bytes(data)
+    except (OSError, ValueError) as e:
+        raise Refused("That file could not be opened as an image. Choose another image.") from e
+    try:
+        asset = storage.store_asset(session, data=jpeg, filename="telegram-image.jpg", content_type="image/jpeg",
+                                    uploaded_by=actor, provenance={"source": source, "generated": False})
+    except storage.AssetRejected as e:
+        raise Refused("That image could not be stored. Choose a smaller image and try again.") from e
+    spec = dict(post.slides[i]["spec"])
+    spec[image_field(post.slides[i])] = {"asset_id": str(asset.id), "url": storage.asset_url(asset.id),
+                                        "credit": "Brand asset" if source == "Brand library" else "Owner supplied"}
+    renderer = deps_renderer or renderer_module.Renderer()
+    try:
+        image = renderer.render(spec, session=session)
+    except renderer_module.RenderError as e:
+        raise Refused("I couldn't render the updated slide. The previous draft is unchanged; please try again.") from e
+    rendered = storage.store_asset(session, data=image, filename="telegram-revised-slide.jpg",
+                                   content_type="image/jpeg", uploaded_by=actor,
+                                   provenance=provenance(spec, "telegram image change", renderer.theme))
+    session.refresh(card)
+    session.refresh(post)
+    image_target(session, card, post.id.hex, str(i), version)
+    queue.update_post(session, post.id, rendered={i: (str(rendered.id), spec)})
+    transitions.send_to_review(session, card, actor=actor,
+                               note=f"Image changed on slide {i + 1}; review the image and update alt text.")
+    try:
+        preview = bot.send_photo(chat_id, image, caption=f"Updated slide {i + 1} · awaiting review")
+        remember(session, chat_id, preview["message_id"], card)
+        session.commit()
+    except TelegramError:
+        pass  # The editor will still send the complete draft for review.
+    say(session, bot, chat_id, "Image updated. I’m sending the new slide to the editor for review. "
+        "Nothing has been scheduled.", card=card)
 
 
 # ---------------------------------------------------------------- commands
@@ -413,6 +559,10 @@ def do_schedule(session: Session, bot: Bot, chat_id: str, card: Card, when_text:
 
 
 def button(session: Session, bot: Bot, chat_id: str, cb: dict, actor: str, deps: Deps) -> None:
+    raw = cb.get("data") or ""
+    if raw.startswith(("is:", "ic:", "in:", "iu:")):
+        image_button(session, bot, chat_id, cb, actor, deps)
+        return
     parsed = render.parse_data(cb.get("data") or "")
     pressed = (cb.get("message") or {}).get("message_id")
     if parsed is None:
@@ -438,6 +588,8 @@ def button(session: Session, bot: Bot, chat_id: str, cb: dict, actor: str, deps:
                     "Reply to this message with a note, or use /help for actions.", card=card)
         elif action == "go":
             do_approve(session, bot, chat_id, card, actor)
+        elif action == "im":
+            choose_slide(session, bot, chat_id, card)
         elif action == "ok":
             version = (cb.get("data") or "").split(":")[-1]
             if version != render.hold_version(session, card):
@@ -484,7 +636,7 @@ def button(session: Session, bot: Bot, chat_id: str, cb: dict, actor: str, deps:
         elif action == "dr":
             transitions.drop(session, card, actor=actor, note="dropped from Telegram")
             bot.send_message(chat_id, f"Dropped <b>{esc(card.title)}</b>.")
-    except (BoardError, queue.QueueError) as e:
+    except (Refused, BoardError, queue.QueueError, ValueError) as e:
         session.rollback()
         bot.answer_callback(cb["id"], str(e))
         bot.send_message(chat_id, f"Not done: {esc(str(e))}", reply_to=pressed)
@@ -495,6 +647,54 @@ def button(session: Session, bot: Bot, chat_id: str, cb: dict, actor: str, deps:
             bot.clear_buttons(chat_id, pressed)
         except TelegramError:
             pass  # an old message whose buttons can no longer be edited
+
+
+def image_button(session: Session, bot: Bot, chat_id: str, cb: dict, actor: str, deps: Deps) -> None:
+    pressed = (cb.get("message") or {}).get("message_id")
+    try:
+        mapped = mapping(session, chat_id, pressed) if pressed else None
+        card = session.get(Card, mapped.card_id) if mapped and mapped.card_id else None
+        if card is None or card.closed_at is not None:
+            raise Refused("That card is no longer available. Open it from /board.")
+        parts = (cb.get("data") or "").split(":")
+        if len(parts) not in (4, 5):
+            raise Refused("That image choice is no longer valid. Open the card and choose again.")
+        action, post_id, index, version = parts[:4]
+        post, i = image_target(session, card, post_id, index, version)
+        if action == "is" and len(parts) == 4:
+            image_choices(session, bot, chat_id, card, post, i, 0)
+        elif action == "in" and len(parts) == 5:
+            image_choices(session, bot, chat_id, card, post, i, int(parts[4]))
+        elif action == "iu" and len(parts) == 4:
+            ask(session, bot, chat_id, "Reply to this message with the photo you want to use. "
+                "Only send an image you have permission to use.", card, f"image:{post.id.hex}:{i}:{version}")
+        elif action == "ic" and len(parts) == 5:
+            candidates = [x for x in library_choices(session, card)
+                          if hashlib.sha256(x["key"].encode()).hexdigest()[:8] == parts[4]]
+            if len(candidates) != 1:
+                raise Refused("That brand image is no longer available. Choose another.")
+            chosen = candidates[0]
+            if not 0 < chosen["size"] <= storage.MAX_IMAGE_BYTES:
+                raise Refused("That image is empty or exceeds 10 MB. Choose another image.")
+            try:
+                connection = brand_library.read(session)
+                body = brand_library._connection(connection).get_object(Bucket=connection["bucket"],
+                                                                          Key=chosen["key"])["Body"]
+                try:
+                    data = body.read(storage.MAX_IMAGE_BYTES + 1)
+                finally:
+                    body.close()
+            except Exception as e:
+                raise Refused("I couldn't load that brand image. Please try again or upload a photo.") from e
+            replace_image(session, bot, chat_id, card, post, i, data, actor, "Brand library", deps.renderer)
+        else:
+            raise Refused("That image choice is no longer valid. Open the card and choose again.")
+    except (Refused, BoardError, queue.QueueError, ValueError, storage.AssetRejected) as e:
+        session.rollback()
+        bot.answer_callback(cb["id"], str(e))
+        bot.send_message(chat_id, f"Not done: {esc(str(e))}", reply_to=pressed)
+        return
+    bot.answer_callback(cb["id"], "Done.")
 
 
 # ---------------------------------------------------------------- what is going on
