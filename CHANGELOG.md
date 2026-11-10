@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Acknowledge Telegram buttons before image previews or rendering, and show progress while images load or slides update. Expired acknowledgements no longer discard an action.
 - Let paired Telegram users choose a draft slide, browse enabled brand images or upload a photo, and send the re-rendered draft back to the editor without scheduling it.
 - Remove Postdesk Facebook Page publishing and restore Instagram scheduling; Facebook sharing can be managed in Instagram. X remains optional.
 

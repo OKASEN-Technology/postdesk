@@ -289,6 +289,7 @@ def photo(session: Session, bot: Bot, chat_id: str, msg: dict, actor: str, deps:
         biggest = max(msg["photo"], key=lambda p: p.get("file_size") or p.get("width", 0))
         if biggest.get("file_size", 0) > storage.MAX_IMAGE_BYTES:
             raise Refused("That image is too large. Send a photo under 10 MB.")
+        say(session, bot, chat_id, "Updating the slide with your photo. This can take a little while.", card=card)
         replace_image(session, bot, chat_id, card, post, slide, bot.get_file(biggest["file_id"]), actor,
                       "Telegram upload", deps_renderer=deps.renderer if deps else None)
         return
@@ -576,6 +577,14 @@ def do_schedule(session: Session, bot: Bot, chat_id: str, card: Card, when_text:
 # ---------------------------------------------------------------- buttons
 
 
+def acknowledge(bot: Bot, callback_id: str, deps: Deps) -> None:
+    """Stop Telegram's spinner before doing work; an expired callback must not discard the action."""
+    try:
+        bot.answer_callback(callback_id)
+    except TelegramError as e:
+        deps.log(f"telegram: could not acknowledge button: {e}")
+
+
 def button(session: Session, bot: Bot, chat_id: str, cb: dict, actor: str, deps: Deps) -> None:
     raw = cb.get("data") or ""
     if raw.startswith(("is:", "ic:", "in:", "iu:")):
@@ -591,6 +600,7 @@ def button(session: Session, bot: Bot, chat_id: str, cb: dict, actor: str, deps:
     if card is None or card.closed_at is not None:
         bot.answer_callback(cb["id"], "That card is closed.")
         return
+    acknowledge(bot, cb["id"], deps)
     try:
         if action == "vw":
             if card.column == "Brief ready":
@@ -626,12 +636,10 @@ def button(session: Session, bot: Bot, chat_id: str, cb: dict, actor: str, deps:
                 "Reply with a time: "
                 "<i>tomorrow 18:00</i>, <i>fri 7:30</i>, or 2031-03-07T18:00.", card,
                 "pick_both_time" if action == "bt" else "pick_time")
-            bot.answer_callback(cb["id"])
             return
         elif action == "rt":
             ask(session, bot, chat_id, f"What should change on <b>{esc(card.title)}</b>? Reply to this message.",
                 card, "rethink")
-            bot.answer_callback(cb["id"])
             return
         elif action == "hd":
             if card.column == "Scheduled":
@@ -656,10 +664,8 @@ def button(session: Session, bot: Bot, chat_id: str, cb: dict, actor: str, deps:
             bot.send_message(chat_id, f"Dropped <b>{esc(card.title)}</b>.")
     except (Refused, BoardError, queue.QueueError, ValueError) as e:
         session.rollback()
-        bot.answer_callback(cb["id"], str(e))
         bot.send_message(chat_id, f"Not done: {esc(str(e))}", reply_to=pressed)
         return
-    bot.answer_callback(cb["id"], "Done.")
     if pressed:
         try:
             bot.clear_buttons(chat_id, pressed)
@@ -669,6 +675,7 @@ def button(session: Session, bot: Bot, chat_id: str, cb: dict, actor: str, deps:
 
 def image_button(session: Session, bot: Bot, chat_id: str, cb: dict, actor: str, deps: Deps) -> None:
     pressed = (cb.get("message") or {}).get("message_id")
+    acknowledge(bot, cb["id"], deps)
     try:
         mapped = mapping(session, chat_id, pressed) if pressed else None
         card = session.get(Card, mapped.card_id) if mapped and mapped.card_id else None
@@ -680,13 +687,17 @@ def image_button(session: Session, bot: Bot, chat_id: str, cb: dict, actor: str,
         action, post_id, index, version = parts[:4]
         post, i = image_target(session, card, post_id, index, version)
         if action == "is" and len(parts) == 4:
+            say(session, bot, chat_id, "Finding brand images. This can take a little while.", card=card)
             image_choices(session, bot, chat_id, card, post, i, 0)
         elif action == "in" and len(parts) == 5:
+            say(session, bot, chat_id, "Finding more brand images. This can take a little while.", card=card)
             image_choices(session, bot, chat_id, card, post, i, int(parts[4]))
         elif action == "iu" and len(parts) == 4:
             ask(session, bot, chat_id, "Reply to this message with the photo you want to use. "
                 "Only send an image you have permission to use.", card, f"image:{post.id.hex}:{i}:{version}")
         elif action == "ic" and len(parts) == 5:
+            say(session, bot, chat_id, "Updating the slide with your selected image. This can take a little while.",
+                card=card)
             candidates = [x for x in library_choices(session, card)
                           if hashlib.sha256(x["key"].encode()).hexdigest()[:8] == parts[4]]
             if len(candidates) != 1:
@@ -698,10 +709,13 @@ def image_button(session: Session, bot: Bot, chat_id: str, cb: dict, actor: str,
             raise Refused("That image choice is no longer valid. Open the card and choose again.")
     except (Refused, BoardError, queue.QueueError, ValueError, storage.AssetRejected) as e:
         session.rollback()
-        bot.answer_callback(cb["id"], str(e))
         bot.send_message(chat_id, f"Not done: {esc(str(e))}", reply_to=pressed)
         return
-    bot.answer_callback(cb["id"], "Done.")
+    except Exception as e:
+        session.rollback()
+        deps.log(f"telegram: image request failed: {type(e).__name__}: {e}")
+        bot.send_message(chat_id, "I couldn't finish the image request. Check /review before trying again.",
+                         reply_to=pressed)
 
 
 # ---------------------------------------------------------------- what is going on

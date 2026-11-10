@@ -192,7 +192,7 @@ def test_the_approve_button_approves_and_clears_its_buttons(session, bot, fake, 
     session.refresh(c)
     assert c.column == "Approved" and _jobs(session, c) == ["make"]
     assert cards.events(session, c)[-1].actor == f"telegram:{tk.CHAT}"
-    assert fake.of("answerCallbackQuery")[-1]["text"] == "Done."
+    assert fake.of("answerCallbackQuery")
     assert fake.of("editMessageReplyMarkup")[-1]["message_id"] == 77
     assert "Approved" in fake.last()["text"]
 
@@ -200,7 +200,7 @@ def test_the_approve_button_approves_and_clears_its_buttons(session, bot, fake, 
 def test_go_and_a_button_on_the_wrong_column_say_why(session, bot, fake, paired):
     c = kit.card(session, column="Inbox")
     handle(session, bot, tk.press(render.data("go", c.id)))
-    assert "needs Planned or Brief ready or On hold" in fake.of("answerCallbackQuery")[-1]["text"]
+    assert "needs Planned or Brief ready or On hold" in fake.last()["text"]
     assert "Not done" in fake.last()["text"] and c.column == "Inbox"
     handle(session, bot, tk.message("/go"))
     assert fake.last()["text"] == "No card is at Brief ready."
@@ -418,6 +418,42 @@ def test_telegram_offers_brand_images_and_rejects_old_choices(session, bot, fake
     assert card.column == "In review"
     handle(session, bot, tk.press(pick, message_id=photo_message), renderer=deps.renderer)
     assert "no longer a draft" in fake.last()["text"]
+
+
+def test_image_button_acknowledges_before_loading_and_survives_expired_callback(session, bot, fake, paired,
+                                                                                  monkeypatch):
+    card = _editor_hold(session)
+    commands.choose_slide(session, bot, tk.CHAT, card)
+    choice_message = _sent_about(session, card)[-1].message_id
+    choice = fake.last()["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
+    fake.clear()
+    fake.fail["answerCallbackQuery"] = "Bad Request: query is too old"
+
+    def load_choices(*_):
+        assert fake.calls[0][0] == "answerCallbackQuery"
+        assert any("Finding brand images" in text for text in fake.texts())
+        return []
+
+    monkeypatch.setattr(commands, "library_choices", load_choices)
+    handle(session, bot, tk.press(choice, message_id=choice_message))
+    assert "No more brand images" in " ".join(fake.texts())
+    assert "Upload a photo" in str(fake.last()["reply_markup"])
+    assert card.column == "On hold"
+
+
+def test_image_button_reports_unexpected_library_failure(session, bot, fake, paired, monkeypatch):
+    card = _editor_hold(session)
+    commands.choose_slide(session, bot, tk.CHAT, card)
+    choice_message = _sent_about(session, card)[-1].message_id
+    choice = fake.last()["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
+
+    def broken_library(*_):
+        raise RuntimeError("connection failed")
+
+    monkeypatch.setattr(commands, "library_choices", broken_library)
+    handle(session, bot, tk.press(choice, message_id=choice_message))
+    assert "couldn't finish the image request" in fake.last()["text"]
+    assert card.column == "On hold"
 
 
 def test_held_review_shows_images_notes_and_approval_without_scheduling(session, bot, fake, paired):
