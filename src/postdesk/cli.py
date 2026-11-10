@@ -206,8 +206,7 @@ def cron(force: bool = typer.Option(False, "--force", help="Publish even outside
         store.refresh_config(session, log=_echo)
         # Instagram fetches private-bucket media through the web service. A
         # sleeping Render free instance must be awake before Meta fetches it.
-        host = httpx.URL(settings.public_base_url).host or ""
-        if host.endswith(".onrender.com") and not settings.storage_s3_public_base_url and queue.due(session):
+        if not settings.storage_s3_public_base_url and queue.due(session):
             try:
                 response = httpx.get(f"{settings.public_base_url.rstrip('/')}/api/health", timeout=120)
                 response.raise_for_status()

@@ -135,13 +135,14 @@ def test_cron_waits_for_publisher_hours(session, monkeypatch):
 def test_cron_loads_saved_settings_before_running(monkeypatch):
     from contextlib import nullcontext
 
-    from postdesk import scheduler, store
+    from postdesk import queue, scheduler, store
     from postdesk.db import session as db_session
 
     calls = []
     marker = object()
     monkeypatch.setattr(db_session, "SessionLocal", lambda: nullcontext(marker))
     monkeypatch.setattr(store, "refresh_config", lambda session, log: calls.append(("settings", session)))
+    monkeypatch.setattr(queue, "due", lambda session: [])
     monkeypatch.setattr(scheduler, "run_once", lambda force: calls.append(("run", force)) or scheduler.RunResult())
 
     result = runner.invoke(app, ["cron"])
@@ -156,7 +157,7 @@ def test_cron_keeps_due_posts_queued_when_media_host_is_unavailable(monkeypatch)
     from postdesk.config import settings
     from postdesk.db import session as db_session
 
-    monkeypatch.setattr(settings, "public_base_url", "https://example.onrender.com")
+    monkeypatch.setattr(settings, "public_base_url", "https://postdesk.example")
     monkeypatch.setattr(settings, "storage_s3_public_base_url", None)
     monkeypatch.setattr(db_session, "SessionLocal", lambda: nullcontext(object()))
     monkeypatch.setattr(store, "refresh_config", lambda session, log: None)
@@ -169,6 +170,29 @@ def test_cron_keeps_due_posts_queued_when_media_host_is_unavailable(monkeypatch)
     assert "posts remain queued" in result.output
 
 
+def test_cron_wakes_custom_domain_before_publishing(monkeypatch):
+    from contextlib import nullcontext
+
+    from postdesk import queue, scheduler, store
+    from postdesk.config import settings
+    from postdesk.db import session as db_session
+
+    calls = []
+    monkeypatch.setattr(settings, "public_base_url", "https://postdesk.example")
+    monkeypatch.setattr(settings, "storage_s3_public_base_url", None)
+    monkeypatch.setattr(settings, "postdesk_daily_ideas", False)
+    monkeypatch.setattr(db_session, "SessionLocal", lambda: nullcontext(object()))
+    monkeypatch.setattr(store, "refresh_config", lambda session, log: None)
+    monkeypatch.setattr(queue, "due", lambda session: [object()])
+    monkeypatch.setattr(httpx, "get", lambda url, **kwargs: calls.append(url) or httpx.Response(
+        200, request=httpx.Request("GET", url)))
+    monkeypatch.setattr(scheduler, "run_once", lambda force: calls.append("publish") or scheduler.RunResult())
+
+    result = runner.invoke(app, ["cron"])
+    assert result.exit_code == 0, result.output
+    assert calls == ["https://postdesk.example/api/health", "publish"]
+
+
 def test_db_upgrade_is_idempotent(database):
     result = runner.invoke(app, ["db", "upgrade"])
     assert result.exit_code == 0 and "database at head" in result.output
@@ -177,7 +201,7 @@ def test_db_upgrade_is_idempotent(database):
 def test_cron_wakes_worker_for_idea_after_publishing(monkeypatch):
     from contextlib import nullcontext
 
-    from postdesk import scheduler, store
+    from postdesk import queue, scheduler, store
     from postdesk.board import daily_ideas
     from postdesk.config import settings
     from postdesk.db import session as db_session
@@ -186,6 +210,7 @@ def test_cron_wakes_worker_for_idea_after_publishing(monkeypatch):
     monkeypatch.setattr(settings, "postdesk_daily_ideas", True)
     monkeypatch.setattr(db_session, "SessionLocal", lambda: nullcontext(object()))
     monkeypatch.setattr(store, "refresh_config", lambda session, log: None)
+    monkeypatch.setattr(queue, "due", lambda session: [])
     monkeypatch.setattr(scheduler, "run_once", lambda force: calls.append("publish") or scheduler.RunResult())
     monkeypatch.setattr(daily_ideas, "ensure_due", lambda session: calls.append("idea") or True)
     monkeypatch.setattr(httpx, "get", lambda *a, **kw: calls.append("wake") or httpx.Response(
