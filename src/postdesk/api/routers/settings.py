@@ -371,3 +371,27 @@ def verify_x_connection(session: Session = Depends(get_session)) -> dict:
         return {"account": XClient(saved).whoami()}
     except (ValueError, XError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/connections/x/access-level")
+def x_access_level(session: Session = Depends(get_session)) -> dict:
+    """Check the permissions X reports for the saved user token."""
+    import httpx
+
+    from postdesk.x.client import XClient
+    from postdesk.x.credentials import read
+
+    try:
+        saved = read(session)
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if saved is None:
+        raise HTTPException(status_code=409, detail="Connect X first.")
+    client = XClient(saved)
+    url = "https://api.x.com/1.1/account/verify_credentials.json"
+    _, headers, _ = client.signer.sign(url, http_method="GET")
+    try:
+        response = httpx.get(url, headers=headers, timeout=20)
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail="Could not reach X.") from exc
+    return {"status": response.status_code, "access_level": response.headers.get("x-access-level")}
