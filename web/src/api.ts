@@ -168,6 +168,7 @@ export const api = {
     call<Post>("/api/posts", json("POST", body)),
   updatePost: (id: string, body: { title?: string; caption?: string; alt_texts?: string[]; slides?: SlidePatch[] }) =>
     call<Post>(`/api/posts/${id}`, json("PATCH", body)),
+  crosspostPublishedX: (id: string) => call<Post>(`/api/posts/${id}/crosspost-x`, json("POST")),
   approve: (id: string, publish_at: string, crosspost_x = false) => call<Post>(`/api/posts/${id}/approve`, json("POST", { publish_at, crosspost_x })),
   xConnection: () => call<{configured: boolean; credential_storage: boolean}>("/api/connections/x"),
   saveXConnection: (credentials: {api_key: string; api_secret: string; access_token: string; access_secret: string}) => call<{account: {username: string; id: string}}>("/api/connections/x", json("PUT", credentials)),

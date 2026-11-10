@@ -242,6 +242,12 @@ def approve_post(post_id: uuid.UUID, body: PostApprove, actor: str = Depends(req
     return _then_board(result, session, actor)
 
 
+@router.post("/{post_id}/crosspost-x", response_model=PostItem)
+def crosspost_published_x(post_id: uuid.UUID, actor: str = Depends(require_auth),
+                          session: Session = Depends(get_session)) -> PostItem:
+    return _run(queue.crosspost_published_to_x, session, post_id, approved_by=actor)
+
+
 @router.post("/{post_id}/unapprove", response_model=PostItem)
 def unapprove_post(post_id: uuid.UUID, actor: str = Depends(require_auth),
                    session: Session = Depends(get_session)) -> PostItem:

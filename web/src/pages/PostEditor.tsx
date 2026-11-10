@@ -154,6 +154,11 @@ export default function PostEditor({ config }: { config: Config }) {
     run(() => api.replaceSlideImage(post.id, slide, { ...body, expected_asset_id: current.asset_id }), () => setImagePicker(false));
   };
   const save = () => run(() => api.updatePost(post.id, edits()));
+  const rejectPost = () => {
+    if (post.channel === "x" && post.status === "approved" &&
+        !window.confirm("Cancel this scheduled X post? The Instagram post will remain scheduled.")) return;
+    run(() => api.action(post.id, "reject"), () => navigate(home));
+  };
   // Back to where the post belongs: its card on the board, else the queue.
   const home = post.card_id ? `/cards/${post.card_id}` : "/queue";
   const approve = () => run(async () => {
@@ -300,21 +305,22 @@ export default function PostEditor({ config }: { config: Config }) {
                   )}
                   {post.channel === "instagram" && post.kind !== "story" && post.kind !== "reel" && <div className="rounded border border-line p-3">
                     <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={crosspostX} onChange={(e) => setCrosspostX(e.target.checked)} className="mt-1" /> Also post to X</label>
-                    <p className="mt-1 text-xs text-ink-2">Uses the same caption and images. X allows up to four images; both platform limits are checked when scheduling. Image alt text is not sent to X. <Link to="/settings" className="text-moss underline">Connect X</Link></p>
+                    <p className="mt-1 text-xs text-ink-2">Creates a separate scheduled X post with the same caption and images. Cancelling the X post does not cancel Instagram. X allows up to four images. Image alt text is not sent to X. <Link to="/settings" className="text-moss underline">Connect X</Link></p>
                   </div>}
                   <div className="flex flex-wrap gap-2">
                     <button type="button" disabled={busy || !publishAt} onClick={approve} className={PRIMARY}>Approve &amp; schedule</button>
                     {dirty && <button type="button" disabled={busy} onClick={save} className={SECONDARY}>Save edits</button>}
-                    <button type="button" disabled={busy} onClick={() => run(() => api.action(post.id, "reject"), () => navigate(home))} className={DANGER}>Reject</button>
+                    <button type="button" disabled={busy} onClick={rejectPost} className={DANGER}>Reject</button>
                   </div>
                 </>
               )}
               {post.status === "approved" && (
                 <>
                   <p className="text-sm text-ink-2">Goes out {fmt(post.publish_at, tz)} · approved by {post.approved_by}. An approved post cannot be edited.</p>
+                  {post.channel === "x" && <p className="text-sm text-ink-2">This is the separately scheduled X copy. Cancelling it stops the X post only.</p>}
                   <div className="flex flex-wrap gap-2">
                     <button type="button" disabled={busy} onClick={() => run(() => api.action(post.id, "unapprove"))} className={SECONDARY}>Unapprove to edit</button>
-                    <button type="button" disabled={busy} onClick={() => run(() => api.action(post.id, "reject"), () => navigate(home))} className={DANGER}>Reject</button>
+                    <button type="button" disabled={busy} onClick={rejectPost} className={DANGER}>{post.channel === "x" ? "Cancel X post" : "Reject"}</button>
                   </div>
                 </>
               )}
@@ -330,10 +336,19 @@ export default function PostEditor({ config }: { config: Config }) {
               {post.status === "failed" && (
                 <div className="flex flex-wrap gap-2">
                   <button type="button" disabled={busy} onClick={() => run(() => api.action(post.id, "back-to-draft"))} className={SECONDARY}>Back to draft</button>
-                  <button type="button" disabled={busy} onClick={() => run(() => api.action(post.id, "reject"), () => navigate(home))} className={DANGER}>Reject</button>
+                  <button type="button" disabled={busy} onClick={rejectPost} className={DANGER}>Reject</button>
                 </div>
               )}
-              {(post.status === "published" || post.status === "rejected") && <p className="text-sm text-ink-2">Nothing left to schedule.</p>}
+              {post.status === "published" && post.channel === "instagram" && (post.kind === "image" || post.kind === "carousel") && (
+                <div className="space-y-2">
+                  <p className="text-sm text-ink-2">Schedule the same caption and images on X. Instagram will not be posted again.</p>
+                  <button type="button" disabled={busy} className={SECONDARY} onClick={() => {
+                    if (!window.confirm("Schedule this published Instagram post on X?")) return;
+                    run(() => api.crosspostPublishedX(post.id));
+                  }}>Schedule on X</button>
+                </div>
+              )}
+              {post.status === "rejected" && <p className="text-sm text-ink-2">Nothing left to schedule.</p>}
             </div>
           </section>
 

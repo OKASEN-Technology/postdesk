@@ -77,3 +77,28 @@ def test_uncertain_x_post_is_not_retried(session, monkeypatch):
     assert publisher.publish_due(session, log=lambda *_: None) == []
     session.refresh(post)
     assert post.status == "approved"
+
+
+def test_published_instagram_can_be_scheduled_on_x_once(session, monkeypatch):
+    monkeypatch.setattr(credentials, "read", lambda _: object())
+    post = _carousel(session)
+    post.status = "published"
+    session.commit()
+    old = SocialPost(channel="x", kind=post.kind, status="rejected", title=post.title,
+                     caption=post.caption, slides=post.slides,
+                     media={"instagram_post_id": str(post.id)}, created_by="admin",
+                     created_at=datetime.now(UTC), updated_at=datetime.now(UTC))
+    session.add(old)
+    session.commit()
+    copy = queue.crosspost_published_to_x(session, post.id, approved_by="admin")
+    assert copy.status == "approved" and copy.caption == post.caption and copy.slides == post.slides
+    assert post.status == "published"
+    with pytest.raises(queue.QueueError, match="already exists"):
+        queue.crosspost_published_to_x(session, post.id, approved_by="admin")
+
+
+def test_only_published_instagram_can_be_recovered_to_x(session, monkeypatch):
+    monkeypatch.setattr(credentials, "read", lambda _: object())
+    post = _carousel(session)
+    with pytest.raises(queue.QueueError, match="published Instagram"):
+        queue.crosspost_published_to_x(session, post.id, approved_by="admin")

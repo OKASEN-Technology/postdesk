@@ -225,6 +225,42 @@ def approve(session: Session, post_id: uuid.UUID, *, publish_at: datetime, appro
     return post
 
 
+
+def crosspost_published_to_x(session: Session, post_id: uuid.UUID, *, approved_by: str) -> SocialPost:
+    """Schedule an exact copy of a published Instagram post without reposting it."""
+    if not approved_by.strip():
+        raise QueueError("approved_by is required")
+    post = _get(session, post_id, lock=True)
+    if post.channel != "instagram" or post.status != "published":
+        raise QueueError("Choose a published Instagram post to schedule on X.")
+    from postdesk.x.credentials import read
+    from postdesk.x.publisher import validate_post
+
+    _validate(session, post.kind, post.caption, post.slides)
+    validate_post(session, post)
+    existing = session.scalars(select(SocialPost).where(
+        SocialPost.channel == "x",
+        SocialPost.status.in_(("approved", "publishing", "published", "failed", "draft")),
+        SocialPost.media["instagram_post_id"].as_string() == str(post.id)).with_for_update()).first()
+    if existing is not None:
+        raise QueueError("An X copy already exists for this post. Check its status before scheduling again.")
+    try:
+        if read(session) is None:
+            raise QueueError("Connect X in Settings before scheduling.")
+    except ValueError as exc:
+        raise QueueError(str(exc)) from exc
+    now = now_utc()
+    copy = SocialPost(channel="x", kind=post.kind, status="approved", title=post.title,
+                      caption=post.caption, slides=post.slides, card_id=post.card_id,
+                      source_ref=post.source_ref, media={"instagram_post_id": str(post.id)},
+                      publish_at=now, approved_by=approved_by.strip(), approved_at=now,
+                      created_by=post.created_by, created_at=now, updated_at=now)
+    session.add(copy)
+    session.commit()
+    session.refresh(copy)
+    return copy
+
+
 def _cancel_x_copy(session: Session, post: SocialPost) -> None:
     if post.channel == "instagram":
         # Cancel any unsent X copy under the same transaction and row lock.
