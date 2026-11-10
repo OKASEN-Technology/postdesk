@@ -46,7 +46,7 @@ SLACK_WEBHOOK_URL=
 TOML_FALLBACK = """[account]
 handle = "yourhandle"
 site = "https://example.com"
-timezone = "UTC"
+timezone = "America/New_York"
 audience = ""
 
 [schedule]

@@ -3,7 +3,7 @@
 [account]
 handle = "yourhandle"                 # your Instagram username, without the @
 site = "https://example.com"          # what "link in bio" points at
-timezone = "Europe/London"            # IANA name; every time below is in it
+timezone = "America/New_York"            # IANA name; every time below is in it
 audience = "people who bake at home"  # one line the writer keeps in mind
 
 [schedule]

@@ -103,7 +103,7 @@ def _parse_hhmm(value: str) -> time:
 class Account(BaseModel):
     handle: str = ""
     site: str = ""
-    timezone: str = "UTC"
+    timezone: str = "America/New_York"
     audience: str = ""
 
     @field_validator("timezone")

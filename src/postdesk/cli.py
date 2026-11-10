@@ -64,7 +64,7 @@ def init(
     handle = typer.prompt("Your Instagram username (without the @)", default="yourhandle")
     site = typer.prompt("The site your bio links to", default="https://example.com")
     while True:
-        tz = typer.prompt("Your timezone (IANA name)", default="Europe/London")
+        tz = typer.prompt("Your timezone (IANA name)", default="America/New_York")
         try:
             ZoneInfo(tz)
             break
