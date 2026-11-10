@@ -410,7 +410,7 @@ def test_telegram_offers_brand_images_and_rejects_old_choices(session, bot, fake
     choice = fake.last()["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
     handle(session, bot, tk.press(choice, message_id=choice_message), renderer=deps.renderer)
     photo = fake.of("sendPhoto")[-1]
-    assert photo["photo"] == item["url"]
+    assert "photo" in photo["_files"]
     pick = photo["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
     photo_message = _sent_about(session, card)[-2].message_id
     handle(session, bot, tk.press(pick, message_id=photo_message), renderer=deps.renderer)

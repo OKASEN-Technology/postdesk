@@ -356,6 +356,20 @@ def library_choices(session: Session, card: Card) -> list[dict]:
     return [keys[x["key"]] for x in selected if x["key"] in keys]
 
 
+def brand_image_bytes(session: Session, item: dict) -> bytes:
+    if not 0 < item["size"] <= storage.MAX_IMAGE_BYTES:
+        raise Refused("That image is empty or exceeds 10 MB. Choose another image.")
+    try:
+        connection = brand_library.read(session)
+        body = brand_library._connection(connection).get_object(Bucket=connection["bucket"], Key=item["key"])["Body"]
+        try:
+            return body.read(storage.MAX_IMAGE_BYTES + 1)
+        finally:
+            body.close()
+    except Exception as e:
+        raise Refused("I couldn't load that brand image. Please try again or upload a photo.") from e
+
+
 def image_choices(session: Session, bot: Bot, chat_id: str, card: Card, post: SocialPost, i: int, page: int) -> None:
     library_error = False
     try:
@@ -374,13 +388,17 @@ def image_choices(session: Session, bot: Bot, chat_id: str, card: Card, post: So
     for item in page_items:
         key = hashlib.sha256(item["key"].encode()).hexdigest()[:8]
         try:
-            msg = bot.send_photo(chat_id, item["url"], caption=esc(item["name"][:200]),
+            data = brand_image_bytes(session, item)
+            if len(data) > storage.MAX_IMAGE_BYTES:
+                continue
+            jpeg, _ = instagram.to_jpeg_bytes(data)
+            msg = bot.send_photo(chat_id, jpeg, caption=esc(item["name"][:200]),
                                  reply_markup={"inline_keyboard": [[{"text": "Use this image",
                                      "callback_data": f"ic:{prefix}:{key}"}]]})
             remember(session, chat_id, msg["message_id"], card)
             session.commit()
             shown += 1
-        except TelegramError:
+        except (TelegramError, Refused, OSError, ValueError):
             continue
     rows = [[{"text": "Upload a photo", "callback_data": f"iu:{prefix}"}]]
     nav = []
@@ -674,18 +692,7 @@ def image_button(session: Session, bot: Bot, chat_id: str, cb: dict, actor: str,
             if len(candidates) != 1:
                 raise Refused("That brand image is no longer available. Choose another.")
             chosen = candidates[0]
-            if not 0 < chosen["size"] <= storage.MAX_IMAGE_BYTES:
-                raise Refused("That image is empty or exceeds 10 MB. Choose another image.")
-            try:
-                connection = brand_library.read(session)
-                body = brand_library._connection(connection).get_object(Bucket=connection["bucket"],
-                                                                          Key=chosen["key"])["Body"]
-                try:
-                    data = body.read(storage.MAX_IMAGE_BYTES + 1)
-                finally:
-                    body.close()
-            except Exception as e:
-                raise Refused("I couldn't load that brand image. Please try again or upload a photo.") from e
+            data = brand_image_bytes(session, chosen)
             replace_image(session, bot, chat_id, card, post, i, data, actor, "Brand library", deps.renderer)
         else:
             raise Refused("That image choice is no longer valid. Open the card and choose again.")
