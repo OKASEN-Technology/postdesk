@@ -595,3 +595,15 @@ def test_web_image_picker_updates_draft_and_rejects_stale_selection(session, adm
     stale = admin.post(f"/api/posts/{post.id}/slides/0/image",
                        json={"expected_asset_id": original, "asset_id": str(image.id)})
     assert stale.status_code == 409
+
+
+def test_renderer_health_treats_gateway_and_network_errors_as_retryable():
+    for response in (httpx.Response(502), httpx.ConnectError("offline")):
+        def handler(_request, response=response):
+            if isinstance(response, Exception):
+                raise response
+            return response
+
+        client = httpx.Client(transport=httpx.MockTransport(handler))
+        with pytest.raises(maker.render.RendererUnavailable, match="temporarily unavailable"):
+            maker.Renderer("http://renderer.test", client=client).health()

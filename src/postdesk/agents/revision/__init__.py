@@ -38,6 +38,12 @@ def turn(session: Session, card: Card, payload: dict, *, call=None, renderer=Non
     if not drafts:
         transitions.stuck(session, card, "nothing to revise: the card has no drafts", actor="maker")
         return None
+    if renderer is None and call is None:
+        # Wake the renderer before paying for an AI response that cannot be applied.
+        from postdesk.maker.render import Renderer
+
+        renderer = Renderer()
+        renderer.health()
     if call is None:
         def call(**kw):
             return llm.structured_call(agent=AGENT, session=session, card_id=card.id, ref=card.source_ref, **kw)

@@ -136,7 +136,9 @@ def make(
     log = log or (lambda _s: None)
     tpl = template if isinstance(template, Template) else load_template(template)
     source_ref = source_ref or facts.ref
-    renderer = renderer or Renderer()
+    if renderer is None:
+        renderer = Renderer()
+        renderer.health()
     resolve_images(session, facts, by=created_by)
     kind, slots, story = plan(tpl, facts)
     log(f"template {tpl.name}: {kind}, {len(slots)} {'frame' if kind == 'story' else 'slide'}(s)")

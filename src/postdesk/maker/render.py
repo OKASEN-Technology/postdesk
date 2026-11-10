@@ -127,9 +127,13 @@ class Renderer:
     def health(self) -> dict:
         self._require()
         try:
-            resp = self.client.get(f"{self.url}/health", timeout=10)
+            resp = self.client.get(f"{self.url}/health", timeout=TIMEOUT_S)
+        except (httpx.TimeoutException, httpx.NetworkError) as e:
+            raise RendererUnavailable(f"The image renderer is temporarily unavailable ({type(e).__name__}).") from e
         except httpx.HTTPError as e:
             raise RenderError(f"renderer at {self.url} is not reachable ({type(e).__name__}: {e})") from e
+        if resp.status_code in TRANSIENT_STATUSES:
+            raise RendererUnavailable(f"The image renderer is temporarily unavailable ({resp.status_code}).")
         if resp.status_code != 200:
             raise RenderError(f"renderer at {self.url} answered {resp.status_code} to /health")
         return resp.json()

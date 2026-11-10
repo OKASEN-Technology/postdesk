@@ -227,3 +227,13 @@ def test_from_an_rss_item_to_awaiting_approval_and_live(session, monkeypatch):
     jobs.housekeeping(session, deps, log=_quiet, scout=False)
     session.refresh(card)
     assert card.column == "Live"
+
+
+def test_renderer_retry_explains_waiting_on_card(session):
+    from postdesk.api.routers.cards import _busy
+
+    c = kit.card(session)
+    job = jobs.enqueue(session, "revise", c.id)
+    job.error = "RendererUnavailable: temporarily unavailable"
+    session.commit()
+    assert _busy(session, [c.id])[c.id] == "Waiting for the image renderer; retrying"
