@@ -24,7 +24,7 @@ from postdesk.telegram import bot as bot_mod
 from tests import boardkit as kit
 from tests import telegramkit as tk
 from tests.conftest import FakeGraph, graph_for
-from tests.test_board import _awaiting, _briefed
+from tests.test_board import _awaiting, _briefed, _made
 
 
 @pytest.fixture(autouse=True)
@@ -358,6 +358,53 @@ def test_hold_and_drop(session, bot, fake, paired):
     handle(session, bot, tk.press(render.data("dr", c.id)))
     session.refresh(c)
     assert c.closed_at is not None and {p.status for p in posts.for_card(session, c.id)} == {"rejected"}
+
+
+def _editor_hold(session):
+    card = _made(session)
+    transitions.review(session, card, kit.review("hold", notes=[{
+        "target": "slide", "slide": 1, "problem": "The cover needs a different image.", "fix": None,
+    }], summary="Review the cover image."))
+    return card
+
+
+def test_held_review_shows_images_notes_and_approval_without_scheduling(session, bot, fake, paired):
+    card = _editor_hold(session)
+    fake.clear()
+    bot_mod.send_notices(session, bot, log=_quiet)
+    assert fake.of("sendMediaGroup") and fake.of("sendPhoto")
+    message = fake.last()
+    text = "\n".join(fake.texts())
+    assert "The cover needs a different image" in text and "caption" in text
+    assert "scheduling is a separate step" in text
+    assert fake.buttons(message) == ["ok", "rt", "bp", "dr"]
+    data = message["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
+    handle(session, bot, tk.press(data))
+    session.refresh(card)
+    assert card.column == "Awaiting approval"
+    assert all(p.status == "draft" for p in posts.drafts(session, card.id))
+    assert fake.buttons(fake.last()) == ["sc", "pk", "rt", "hd"]
+
+
+def test_held_review_can_be_reopened_and_rejects_stale_or_unpaired_approval(session, bot, fake, paired):
+    card = _editor_hold(session)
+    handle(session, bot, tk.message("/review"))
+    data = fake.last()["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
+    handle(session, bot, tk.press(data, chat=tk.OTHER))
+    assert card.column == "On hold" and fake.of("answerCallbackQuery")[-1]["text"] == commands.PRIVATE
+    post = posts.drafts(session, card.id)[0]
+    post.updated_at = post.updated_at + timedelta(seconds=1)
+    session.commit()
+    handle(session, bot, tk.press(data))
+    assert card.column == "On hold" and "out of date" in fake.last()["text"]
+
+
+def test_cannot_accept_held_review_when_telegram_cannot_send_photo(session, bot, fake, paired):
+    card = _editor_hold(session)
+    fake.fail["sendMediaGroup"] = "bad image"
+    handle(session, bot, tk.message("/review"))
+    assert "ok" not in fake.buttons(fake.last())
+    assert card.column == "On hold"
 
 
 def _reply_target(session, bot, card) -> int:

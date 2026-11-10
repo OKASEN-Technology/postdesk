@@ -174,6 +174,18 @@ def hold(session: Session, card: Card, *, actor: str, note: str | None = None) -
     return card
 
 
+def accept_review_hold(session: Session, card: Card, *, actor: str) -> Card:
+    """A person accepts the editor's flagged draft; scheduling remains separate."""
+    if not cards.is_human(actor, session):
+        raise BoardError("only the admin can accept a held review")
+    cards.check_move(session, card, "Awaiting approval", actor=actor, allowed_from=("On hold",))
+    if (card.review or {}).get("column") != "On hold" or not posts.drafts(session, card.id):
+        raise BoardError("there is no held review with drafts to accept")
+    cards.comment(session, card, "user", "Accepted the editor's review warnings as is; scheduling remains separate.",
+                  commit=False)
+    return set_column(session, card, "Awaiting approval", actor=actor, reason="accepted held review as is")
+
+
 def send_to_review(session: Session, card: Card, *, actor: str, note: str | None = None) -> Card:
     """The drafts as they stand (fixed by hand, say) to the editor again,
     with a fresh count of revision rounds."""

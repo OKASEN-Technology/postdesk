@@ -11,7 +11,9 @@ images with their credit and licence, a post's slides as an album).
 
 from __future__ import annotations
 
+import hashlib
 import html
+import json
 import re
 import uuid
 from dataclasses import dataclass, field
@@ -156,6 +158,7 @@ ACTIONS = {
     "rv": "To the editor",
     "bp": "Back to the partner",
     "dr": "Drop",
+    "ok": "Approve as is",
 }
 
 
@@ -168,7 +171,7 @@ def parse_data(value: str) -> tuple[str, uuid.UUID] | None:
     if action not in ACTIONS:
         return None
     try:
-        return action, uuid.UUID(hex=hexid)
+        return action, uuid.UUID(hex=hexid.split(":", 1)[0])
     except ValueError:
         return None
 
@@ -205,6 +208,12 @@ def hold_buttons(session: Session, card: Card) -> dict:
     if posts.drafts(session, card.id):
         return keyboard(card, [["rv"], ["bp", "dr"]])
     return keyboard(card, [["bp"], ["dr"]])
+
+
+def hold_version(session: Session, card: Card) -> str:
+    drafts_ = posts.drafts(session, card.id)
+    value = {"review": card.review, "drafts": [(str(p.id), str(p.updated_at)) for p in drafts_]}
+    return hashlib.sha256(json.dumps(value, sort_keys=True, default=str).encode()).hexdigest()[:12]
 
 
 # ---------------------------------------------------------------- images
@@ -321,8 +330,55 @@ def drafts(session: Session, card: Card, *, buttons: bool = True) -> list[Out]:
 
 
 def on_hold(session: Session, card: Card, reason: str | None, *, buttons: bool = True) -> list[Out]:
-    blocks = [f"<b>On hold: {esc(card.title)}</b>", *md_blocks(reason or card.stuck_reason or "")]
-    return messages(blocks, hold_buttons(session, card) if buttons else None)
+    drafts_ = posts.drafts(session, card.id)
+    review = card.review or {}
+    if not drafts_ or review.get("column") != "On hold":
+        blocks = [f"<b>On hold: {esc(card.title)}</b>", *md_blocks(reason or card.stuck_reason or "")]
+        return messages(blocks, hold_buttons(session, card) if buttons else None)
+    out: list[Out] = []
+    blocks = [f"<b>Needs your review: {esc(card.title)}</b>"]
+    if review.get("summary"):
+        blocks += md_blocks(str(review["summary"]))
+    for note in review.get("notes") or []:
+        label = str(note.get("target") or "post").replace("_", " ")
+        if note.get("slide"):
+            label += f" · slide {note['slide']}"
+        text = f"**{label}**: {note.get('problem') or ''}"
+        if note.get("fix"):
+            text += f"\nSuggested: {note['fix']}"
+        blocks.extend(md_blocks(text))
+    complete = True
+    for p in drafts_:
+        label = "Story" if p.kind == "story" else ("Carousel" if p.kind == "carousel" else "Post")
+        if not p.slides:
+            complete = False
+            blocks.append(f"{esc(label)} has no slides to review.")
+            continue
+        if p.kind == "reel":
+            complete = False
+            blocks.append("This Reel cannot be previewed in Telegram yet.")
+            continue
+        photos = []
+        for i, slide in enumerate(p.slides, 1):
+            img = image_bytes(session, slide.get("asset_id"))
+            if img:
+                photos.append((img, f"{esc(label)} · slide {i} of {len(p.slides)}"))
+            else:
+                complete = False
+                blocks.append(f"{esc(label)} slide {i} could not be loaded.")
+        for i in range(0, len(photos), 10):
+            out.append(Out(photos=photos[i:i + 10]))
+        if p.caption:
+            blocks += [f"<b>{esc(label)} caption</b>", *[esc(piece) for piece in split(p.caption)]]
+        blocks += _alt_blocks([s.get("alt_text") or "" for s in p.slides])
+    blocks.append("<i>Review the images and notes. Approving keeps this as a draft; scheduling is a separate step.</i>")
+    controls = None
+    if buttons:
+        controls = keyboard(card, [["rt"], ["bp", "dr"]])
+        if complete:
+            controls["inline_keyboard"].insert(0, [{"text": ACTIONS["ok"],
+                "callback_data": f"{data('ok', card.id)}:{hold_version(session, card)}"}])
+    return out + messages(blocks, controls)
 
 
 def live(session: Session, card: Card) -> list[Out]:

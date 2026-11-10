@@ -42,6 +42,7 @@ caption, to offer it a picture.
 /board: every open card by column
 /queue: what is scheduled
 /status: the account, the renderer, this month's spend
+/review: show the held post and its review
 /go: approve the brief
 /rethink &lt;note&gt;: back to the partner (or the maker) with a note
 /schedule [time]: schedule it: the recommended time, or <i>tomorrow 18:00</i>, <i>fri 7:30</i>
@@ -60,6 +61,7 @@ FITS = {
     "hold": ("Planned", "Brief ready", "Approved", "Making", "In review", "Awaiting approval", "Scheduled"),
     "drop": ("Inbox", "Planned", "Brief ready", "Awaiting approval", "On hold"),
     "comment": transitions.PARTNER_COLUMNS,
+    "review": ("On hold",),
 }
 WHAT = {
     "go": "at Brief ready",
@@ -69,6 +71,7 @@ WHAT = {
     "hold": "in progress",
     "drop": "open",
     "comment": "with the partner",
+    "review": "on hold",
 }
 
 
@@ -96,6 +99,7 @@ def send(session: Session, bot: Bot, chat_id: str, outs: list[Out], *, card: Car
     """Send `outs` in order; each message about a card is remembered, so a
     reply to it lands on that card. Returns the message ids."""
     ids: list[int] = []
+    photo_failed = False
     for o in outs:
         msgs: list[dict] = []
         if o.photos:
@@ -106,16 +110,23 @@ def send(session: Session, bot: Bot, chat_id: str, outs: list[Out], *, card: Car
                 else:
                     msgs = bot.send_media_group(chat_id, o.photos)
             except TelegramError as e:  # a picture Telegram will not take is not worth losing the text for
+                photo_failed = True
                 msgs = [bot.send_message(chat_id, f"(a picture could not be sent: {esc(str(e))[:200]})")]
         if o.text:
+            buttons = o.buttons
+            if photo_failed and buttons:
+                rows = [[b for b in row if not b.get("callback_data", "").startswith("ok:")]
+                        for row in buttons.get("inline_keyboard", [])]
+                buttons = {**buttons, "inline_keyboard": rows}
+                buttons["inline_keyboard"] = [row for row in buttons["inline_keyboard"] if row]
             try:
-                msgs.append(bot.send_message(chat_id, o.text, reply_markup=o.buttons, reply_to=reply_to))
+                msgs.append(bot.send_message(chat_id, o.text, reply_markup=buttons, reply_to=reply_to))
             except TelegramError as e:
                 if "parse" not in str(e).lower():
                     raise
                 # The HTML did not parse: the same words, plain.
                 msgs.append(bot.send_message(chat_id, esc(render.visible(o.text))[:render.LIMIT],
-                                             reply_markup=o.buttons, reply_to=reply_to))
+                                             reply_markup=buttons, reply_to=reply_to))
         for m in msgs:
             if card is not None and m and m.get("message_id") is not None:
                 remember(session, chat_id, m["message_id"], card, o.purpose)
@@ -281,6 +292,9 @@ def command(session: Session, bot: Bot, chat_id: str, msg: dict, name: str, args
         bot.send_message(chat_id, queue_text(session, now=deps.now))
     elif name == "status":
         bot.send_message(chat_id, status_text(session, deps))
+    elif name == "review":
+        card, _ = target(session, chat_id, msg, "review")
+        send(session, bot, chat_id, render.on_hold(session, card, card.stuck_reason), card=card)
     elif name == "pause":
         control.pause(session, by=actor)
         bot.send_message(chat_id, "Paused: the scout and the agents stop after what they are doing now. What is "
@@ -379,6 +393,12 @@ def button(session: Session, bot: Bot, chat_id: str, cb: dict, actor: str, deps:
     try:
         if action == "go":
             do_approve(session, bot, chat_id, card, actor)
+        elif action == "ok":
+            version = (cb.get("data") or "").split(":")[-1]
+            if version != render.hold_version(session, card):
+                raise BoardError("This review is out of date. Send /review to see the current draft.")
+            transitions.accept_review_hold(session, card, actor=actor)
+            send(session, bot, chat_id, render.drafts(session, card), card=card)
         elif action == "sc":
             do_schedule(session, bot, chat_id, card, "", actor)
         elif action == "pk":
