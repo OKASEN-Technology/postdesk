@@ -194,7 +194,26 @@ def scout_cmd(
 @app.command()
 def cron(force: bool = typer.Option(False, "--force", help="Publish even outside publisher hours.")) -> None:
     """One pass: publish what is due, then collect insights. For a system cron or a hosted cron job."""
-    from postdesk import scheduler
+    import httpx
+
+    from postdesk import queue, scheduler, store
+    from postdesk.config import settings
+    from postdesk.db.session import SessionLocal
+
+    # A hosted cron starts in a fresh process, so it must load the same saved
+    # account, publishing window and credentials as the web application.
+    with SessionLocal() as session:
+        store.refresh_config(session, log=_echo)
+        # Instagram fetches private-bucket media through the web service. A
+        # sleeping Render free instance must be awake before Meta fetches it.
+        host = httpx.URL(settings.public_base_url).host or ""
+        if host.endswith(".onrender.com") and not settings.storage_s3_public_base_url and queue.due(session):
+            try:
+                response = httpx.get(f"{settings.public_base_url.rstrip('/')}/api/health", timeout=120)
+                response.raise_for_status()
+            except httpx.HTTPError:
+                _err("Media host is unavailable; posts remain queued for the next run.")
+                raise typer.Exit(1) from None
 
     result = scheduler.run_once(force=force)
     if result.published or result.failed:

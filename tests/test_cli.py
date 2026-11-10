@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import httpx
+import pytest
 from PIL import Image
 from typer.testing import CliRunner
 
@@ -129,6 +130,43 @@ def test_cron_waits_for_publisher_hours(session, monkeypatch):
     r = scheduler.run_once(log=logs.append, graph=_graph(FakeGraph()))
     assert r.skipped_hours and r.ok
     assert not queue.due(session)
+
+
+def test_cron_loads_saved_settings_before_running(monkeypatch):
+    from contextlib import nullcontext
+
+    from postdesk import scheduler, store
+    from postdesk.db import session as db_session
+
+    calls = []
+    marker = object()
+    monkeypatch.setattr(db_session, "SessionLocal", lambda: nullcontext(marker))
+    monkeypatch.setattr(store, "refresh_config", lambda session, log: calls.append(("settings", session)))
+    monkeypatch.setattr(scheduler, "run_once", lambda force: calls.append(("run", force)) or scheduler.RunResult())
+
+    result = runner.invoke(app, ["cron"])
+    assert result.exit_code == 0, result.output
+    assert calls == [("settings", marker), ("run", False)]
+
+
+def test_cron_keeps_due_posts_queued_when_media_host_is_unavailable(monkeypatch):
+    from contextlib import nullcontext
+
+    from postdesk import queue, scheduler, store
+    from postdesk.config import settings
+    from postdesk.db import session as db_session
+
+    monkeypatch.setattr(settings, "public_base_url", "https://example.onrender.com")
+    monkeypatch.setattr(settings, "storage_s3_public_base_url", None)
+    monkeypatch.setattr(db_session, "SessionLocal", lambda: nullcontext(object()))
+    monkeypatch.setattr(store, "refresh_config", lambda session, log: None)
+    monkeypatch.setattr(queue, "due", lambda session: [object()])
+    monkeypatch.setattr(httpx, "get", lambda *a, **kw: (_ for _ in ()).throw(httpx.ConnectError("offline")))
+    monkeypatch.setattr(scheduler, "run_once", lambda **kwargs: pytest.fail("must not attempt publishing"))
+
+    result = runner.invoke(app, ["cron"])
+    assert result.exit_code == 1
+    assert "posts remain queued" in result.output
 
 
 def test_db_upgrade_is_idempotent(database):
