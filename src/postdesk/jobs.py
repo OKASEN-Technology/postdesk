@@ -54,6 +54,7 @@ POLL_S = 2.0
 HOUSEKEEPING_S = 60.0
 # A job stopped by the spend ceiling is looked at again after this long.
 CEILING_WAIT = timedelta(hours=1)
+RENDERER_WAIT = timedelta(seconds=60)
 
 
 class Transient(RuntimeError):
@@ -197,6 +198,17 @@ def run(session: Session, job: Job, deps: Deps | None = None, *, log=print) -> J
     except Exception as e:
         session.rollback()
         card = session.get(Card, job.card_id) if job.card_id else None
+        from postdesk.maker.render import RendererNotReady
+
+        if isinstance(e, RendererNotReady):
+            # The preflight happens before the maker or revision agent spends
+            # on generation. Wait for the service without exhausting retries.
+            job.status, job.error = "queued", f"{type(e).__name__}: {e}"[:2000]
+            job.attempts = max(0, job.attempts - 1)
+            job.run_after = now_utc() + RENDERER_WAIT
+            session.commit()
+            log(f"job {job.kind} for card {job.card_id}: waiting for renderer until {job.run_after:%H:%M:%S}")
+            return job
         if is_transient(e) and job.attempts < MAX_ATTEMPTS:
             job.status, job.error = "queued", f"{type(e).__name__}: {e}"[:2000]
             job.run_after = now_utc() + timedelta(seconds=BACKOFF_S * 2 ** (job.attempts - 1))

@@ -74,7 +74,7 @@ def _busy(session: Session, card_ids: list[uuid.UUID]) -> dict[uuid.UUID, str]:
     out: dict[uuid.UUID, str] = {}
     for cid, kind, status, error in rows:
         if status == "running" or cid not in out:
-            if status == "queued" and error and error.startswith("RendererUnavailable"):
+            if status == "queued" and error and error.startswith(("RendererUnavailable", "RendererNotReady")):
                 out[cid] = "Waiting for the image renderer; retrying"
             else:
                 out[cid] = f"{kind} {'working' if status == 'running' else 'queued'}"
