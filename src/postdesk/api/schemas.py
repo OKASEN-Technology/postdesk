@@ -17,6 +17,7 @@ class Slide(BaseModel):
     # (maker.SLIDE_COPY). Both None for an uploaded slide.
     spec: dict | None = None
     words: dict | None = None
+    can_replace_image: bool = False
 
 
 class SlidePatch(BaseModel):

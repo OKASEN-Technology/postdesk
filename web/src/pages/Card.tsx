@@ -52,7 +52,7 @@ function Actions({ card, config, onDone }: { card: CardDetail; config: Config; o
   const col = card.column;
   const hasDrafts = card.drafts.some((d) => d.status === "draft");
   const canAcceptDraft = col === "On hold" && hasDrafts &&
-    (card.stuck_reason === "Image updated. Review the current draft before scheduling." ||
+    (["Image updated. Review the current draft before scheduling.", "Draft updated. Review the changes before scheduling."].includes(card.stuck_reason || "") ||
      (card.review?.column === "On hold" && !!card.review?.why &&
       (card.stuck_reason === card.review.why || !!card.stuck_reason?.startsWith(`${card.review.why}:`))));
   const needNote = () => { if (!note.trim()) { setError("Write what to change first."); return false; } return true; };
@@ -208,6 +208,7 @@ export default function Card({ config }: { config: Config }) {
   }, [card, load]);
 
   if (!card) return error ? <ErrorNote text={error} /> : <p className="text-sm text-ink-3">Loading…</p>;
+  const latestRevision = [...card.thread].reverse().find((c) => c.author === "maker" && c.body_md.startsWith("Revised:"));
   const facts = card.facts as { title?: string; summary?: string; url?: string; figures?: Record<string, string>; body_md?: string } | null;
 
   return (
@@ -260,7 +261,9 @@ export default function Card({ config }: { config: Config }) {
           </Section>
 
           {card.drafts.length > 0 && (
-            <Section title="Drafts">
+            <Section title={["Image updated. Review the current draft before scheduling.", "Draft updated. Review the changes before scheduling."].includes(card.stuck_reason || "") ? "Updated drafts · review changes" : "Drafts"}>
+              {card.stuck_reason === "Draft updated. Review the changes before scheduling." && latestRevision &&
+                <div className="mb-3 rounded bg-paper-2 p-3"><Text md={latestRevision.body_md} /><p className="mt-2 text-xs text-ink-2">Open a slide to view it and change its picture or words.</p></div>}
               <p className="mb-3 text-xs text-ink-2">To also post to X, open an Instagram draft and choose X when scheduling it.</p>
               <ul className="space-y-3">
                 {card.drafts.map((d) => (
@@ -290,7 +293,7 @@ export default function Card({ config }: { config: Config }) {
           {card.review && (
             <Section title={`The editor's verdict (round ${card.review.round})`}
                      aside={<span className={`text-xs font-semibold ${card.review.verdict === "pass" ? "text-moss" : "text-clay"}`}>{card.review.verdict}</span>}>
-              {card.stuck_reason === "Image updated. Review the current draft before scheduling." &&
+              {["Image updated. Review the current draft before scheduling.", "Draft updated. Review the changes before scheduling."].includes(card.stuck_reason || "") &&
                 <p className="mb-2 text-xs text-ink-2">These notes are from before the image change. Review the current slides and alt text, or send the draft to the editor again.</p>}
               <Text md={card.review.summary} />
               <table className="mt-2 w-full text-xs">

@@ -36,7 +36,8 @@ def notes_text(payload: dict) -> str:
     return "The editor's notes (act on them):\n" + ("\n".join(lines) or "(none)")
 
 
-def user_content(session: Session, card: Card, drafts: list[SocialPost], payload: dict) -> list[dict]:
+def user_content(session: Session, card: Card, drafts: list[SocialPost], payload: dict,
+                 candidates: list[dict] | None = None) -> list[dict]:
     head = [
         notes_text(payload),
         "",
@@ -45,6 +46,8 @@ def user_content(session: Session, card: Card, drafts: list[SocialPost], payload
         card_facts.facts_prompt(card) if card.facts else f"No source: the card says:\n# {card.title}\n{card.body_md}",
         "</source>",
         "",
+        f"Current account theme: {__import__('postdesk.config', fromlist=['config']).config.theme.name}.",
+        f"Approved revised brief: {card.brief_md or '(none)'}\nGuidance: {card.guidance or '(none)'}",
         "The drafts follow.",
     ]
     blocks: list[dict] = [{"type": "text", "text": "\n".join(head)}]
@@ -54,11 +57,18 @@ def user_content(session: Session, card: Card, drafts: list[SocialPost], payload
                                                f"Caption:\n{cap}"})
         for i, s in enumerate(p.slides):
             words = {k: v for k, v in (slide_words(s.get("spec")) or {}).items() if k not in NOT_WORDS}
-            desc = (f"index {i} (slide {i + 1}): alt text: {s.get('alt_text') or '(none)'}; "
+            from postdesk.telegram.commands import image_field
+            desc = (f"image replacement supported: {bool(image_field(s))}; index {i} (slide {i + 1}): "
+                    f"alt text: {s.get('alt_text') or '(none)'}; "
                     + (f"editable words: {json.dumps(words, ensure_ascii=False)}" if words
                        else "uploaded, its words cannot change"))
             img = agents.image_for({"asset_id": s.get("asset_id")}, session)
             blocks.append({"type": "text", "text": desc})
             if img:
                 blocks.append(img)
+    for candidate in candidates or []:
+        blocks.append({"type": "text", "text": f"Brand image key {candidate['key']}: {candidate['what']}"})
+        image = agents.image_for(candidate, session)
+        if image:
+            blocks.append(image)
     return blocks

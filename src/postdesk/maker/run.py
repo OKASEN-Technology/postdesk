@@ -210,7 +210,8 @@ def needs_theme_refresh(session: Session, post: SocialPost, theme: str) -> bool:
 
 def revise(session: Session, post_id: uuid.UUID, *, caption: str | None = None, alt_texts: list[str] | None = None,
            slides: list[dict] | None = None, title: str | None = None, renderer: Renderer | None = None,
-           by: str = "admin", refresh_theme: bool = False) -> SocialPost:
+           by: str = "admin", refresh_theme: bool = False, images: list[dict] | None = None,
+           force_theme: bool = False) -> SocialPost:
     """A draft's caption, alt text, title and the words on its slides. A
     slide patch (`{index (0-based), fields: copy field -> text}`) is merged
     into the slide's stored spec, checked like fresh copy (`patch_spec`)
@@ -218,7 +219,7 @@ def revise(session: Session, post_id: uuid.UUID, *, caption: str | None = None, 
     checked before anything renders, so a refused one leaves the post as
     it was. Refused on an approved post (unapprove first)."""
     rendered: dict[int, tuple[str, dict]] = {}
-    if slides or refresh_theme:
+    if slides or refresh_theme or images or force_theme:
         post = session.get(SocialPost, post_id)
         if post is None:
             raise LookupError(f"post {post_id} not found")
@@ -242,13 +243,29 @@ def revise(session: Session, post_id: uuid.UUID, *, caption: str | None = None, 
                 specs[i] = patch_spec(spec, fields, known)
             except MakerError as e:
                 raise MakerError(f"slide {i + 1}: {e}") from e
+        from postdesk.maker.render import schema
+        for image in images or []:
+            i = int(image["index"])
+            if not 0 <= i < len(post.slides):
+                raise queue.QueueError("Slide is no longer available.")
+            spec = dict(specs.get(i) or post.slides[i].get("spec") or {})
+            properties = schema()["$defs"].get(spec.get("type"), {}).get("properties", {})
+            field = next ( (f for f in ("image", "background") if f in properties), None)
+            if not field:
+                raise queue.QueueError(f"Slide {i + 1} does not support a picture.")
+            asset = session.get(ContentAsset, uuid.UUID(str(image["asset_id"])))
+            if not asset or not asset.content_type.startswith("image/"):
+                raise queue.QueueError("The selected image is unavailable.")
+            spec[field] = {"asset_id": str(asset.id), "url": storage.asset_url(asset.id),
+                           "credit": image.get("credit") or "Owner supplied"}
+            specs[i] = spec
         renderer = renderer or Renderer()
-        if refresh_theme:
+        if refresh_theme or force_theme:
             for i, slide in enumerate(post.slides):
                 if i in specs or not slide.get("spec") or not slide.get("asset_id"):
                     continue
                 asset = session.get(ContentAsset, uuid.UUID(slide["asset_id"]))
-                if asset and (asset.provenance or {}).get("theme") != renderer.theme:
+                if asset and (force_theme or (asset.provenance or {}).get("theme") != renderer.theme):
                     specs[i] = slide["spec"]
         slug = _slug(post.title)
         for i, spec in specs.items():

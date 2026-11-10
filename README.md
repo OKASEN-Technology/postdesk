@@ -173,6 +173,13 @@ each slide in your theme, and files the carousel and its Story as drafts
 with recommended times. Open the queue, read it, change a line on a slide
 if you like (only that slide is re-rendered), and approve.
 
+For a draft on a board card, Rethink applies your note to the existing draft and
+returns it for your review. It can change slide copy, choose from the connected
+brand library, or refresh the current theme when asked. Requests it cannot
+apply are reported for review. The post editor also lets you choose a brand
+image or upload one for a supported slide; it re-renders that slide and leaves
+the other slides alone. Review the image and alt text before scheduling.
+
 `--template explainer | spotlight | stat | list | story-only` changes the
 shape ([docs/templates.md](docs/templates.md)); `--dry-run` shows the plan
 and the brief without calling anything. A run costs a few cents and is

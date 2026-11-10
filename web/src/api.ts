@@ -7,7 +7,7 @@ export type Status = "draft" | "approved" | "publishing" | "published" | "failed
 export interface Slide {
   asset_id: string; alt_text: string; url: string | null;
   /** A made slide's render spec and the words on it that can be changed (null for an uploaded slide). */
-  spec: Record<string, unknown> | null; words: Record<string, string> | null;
+  spec: Record<string, unknown> | null; words: Record<string, string> | null; can_replace_image: boolean;
 }
 export interface SlidePatch { index: number; fields: Record<string, string> }
 
@@ -212,6 +212,7 @@ export const api = {
   permissions: (revoked = false) => call<Permission[]>(`/api/permissions${revoked ? "?revoked=true" : ""}`),
   addPermission: (body: PermissionIn) => call<Permission>("/api/permissions", json("POST", body)),
   revokePermission: (id: string) => call<Permission>(`/api/permissions/${id}`, json("DELETE")),
+  replaceSlideImage: (postId: string, index: number, body: Record<string, string>) => call<Post>(`/api/posts/${postId}/slides/${index}/image`, json("POST", body)),
   importBrandVideo: (key: string) => call<Asset>("/api/assets/brand-video", json("POST", {key})),
   upload: (file: File, credit: string) => {
     const form = new FormData();

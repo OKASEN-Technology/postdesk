@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { api, errorText, type Config, type Lint, type Post, type SlidePatch } from "../api";
+import { api, errorText, type BrandItem, type Config, type Lint, type Post, type SlidePatch } from "../api";
 import { fmt, fromLocalInput, insidePublisherHours, toLocalInput } from "../time";
 import { Badge, CARD, DANGER, ErrorNote, INPUT, LABEL, PRIMARY, SECONDARY } from "../ui";
 
@@ -72,6 +72,9 @@ export default function PostEditor({ config }: { config: Config }) {
   const [publishAt, setPublishAt] = useState("");
   const [crosspostX, setCrosspostX] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [brandImages, setBrandImages] = useState<BrandItem[] | null>(null);
+  const [imagePicker, setImagePicker] = useState(false);
+  const [imageSearch, setImageSearch] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback((p: Post) => {
@@ -137,6 +140,15 @@ export default function PostEditor({ config }: { config: Config }) {
     title, caption: post.kind === "story" ? undefined : caption, alt_texts: alts,
     slides: wordPatches.length ? wordPatches : undefined,
   });
+  const chooseBrandImages = () => {
+    setImagePicker(true);
+    api.brandLibrary().then((result) => setBrandImages(result.items.filter((x) => x.enabled && x.type === "image")))
+      .catch((e) => setError(errorText(e)));
+  };
+  const replaceImage = (body: Record<string, string>) => {
+    if (dirty && !window.confirm("You have unsaved text changes. Changing the image will discard them. Continue?")) return;
+    run(() => api.replaceSlideImage(post.id, slide, { ...body, expected_asset_id: current.asset_id }), () => setImagePicker(false));
+  };
   const save = () => run(() => api.updatePost(post.id, edits()));
   // Back to where the post belongs: its card on the board, else the queue.
   const home = post.card_id ? `/cards/${post.card_id}` : "/queue";
@@ -181,6 +193,21 @@ export default function PostEditor({ config }: { config: Config }) {
               </>
             )}
           </div>
+          {editable && current?.can_replace_image && (
+            <div className="mx-auto mt-3 max-w-lg rounded border border-line p-3">
+              <div className="flex flex-wrap gap-2"><button type="button" className={SECONDARY} disabled={busy} onClick={chooseBrandImages}>Choose brand image</button>
+                <label className={`${SECONDARY} cursor-pointer`}>Upload image<input type="file" className="sr-only" accept="image/jpeg,image/png,image/webp" disabled={busy} onChange={async (e) => {
+                  const file = e.target.files?.[0]; e.target.value = ""; if (!file) return;
+                  if (dirty && !window.confirm("You have unsaved text changes. Uploading will discard them. Continue?")) return;
+                  setBusy(true); setError(null); try { const asset = await api.upload(file, "Owner supplied"); load(await api.replaceSlideImage(post.id, slide, {asset_id: asset.id, expected_asset_id: current.asset_id})); setImagePicker(false); } catch (err) { setError(errorText(err)); } finally { setBusy(false); }
+                }} /></label></div>
+              <p className="mt-2 text-xs text-ink-2">The picture changes on this slide only. Review its alt text afterward.</p>
+              {imagePicker && <div className="mt-3"><div className="flex justify-between"><p className={LABEL}>Brand images</p><button type="button" className="text-xs underline" onClick={() => setImagePicker(false)}>Close</button></div>
+                <label className="mt-2 block text-xs text-ink-2">Search brand images<input className={INPUT} value={imageSearch} onChange={(e) => setImageSearch(e.target.value)} placeholder="Search by file name" /></label>
+                {brandImages === null ? <p className="mt-2 text-sm">Loading images…</p> : brandImages.length === 0 ? <p className="mt-2 text-sm">No enabled brand images found.</p> : <div className="mt-2 grid max-h-80 grid-cols-3 gap-2 overflow-auto">{brandImages.filter((image) => image.name.toLowerCase().includes(imageSearch.toLowerCase())).slice(0, 80).map((image) => <button type="button" key={image.key} disabled={busy} onClick={() => replaceImage({brand_key: image.key})} className="overflow-hidden rounded border border-line text-left hover:border-ink"><img src={image.url} alt="" loading="lazy" className="aspect-square w-full object-cover" /><span className="block truncate p-1 text-xs">{image.name}</span></button>)}</div>}<p className="mt-2 text-xs text-ink-2">Showing up to 80 images. Search to find more.</p>
+              </div>}
+            </div>
+          )}
           <p className="mt-2 text-center font-mono text-xs text-ink-2">
             Slide {slide + 1} / {count}{count > 1 && " · ← → to move"}
             {missingAlt > 0 && <span className="text-clay"> · {missingAlt} without alt text</span>}

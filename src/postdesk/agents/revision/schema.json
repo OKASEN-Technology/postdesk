@@ -1,7 +1,12 @@
 {
   "type": "object",
   "additionalProperties": false,
-  "required": ["reply", "posts"],
+  "required": [
+    "reply",
+    "posts",
+    "refresh_theme",
+    "unresolved"
+  ],
   "properties": {
     "reply": {
       "type": "string",
@@ -12,49 +17,122 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["id", "caption", "alt_texts", "slides"],
+        "required": [
+          "id",
+          "caption",
+          "alt_texts",
+          "slides"
+        ],
         "properties": {
-          "id": {"type": "string", "description": "The draft's id from the prompt."},
-          "caption": {"type": ["string", "null"], "description": "The whole new caption, or null to keep it. Always null for a Story."},
+          "id": {
+            "type": "string",
+            "description": "The draft's id from the prompt."
+          },
+          "caption": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The whole new caption, or null to keep it. Always null for a Story."
+          },
           "alt_texts": {
-            "type": ["array", "null"],
-            "items": {"type": "string"},
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
             "description": "Every slide's alt text in order (the same count as the slides), or null to keep them."
           },
           "slides": {
-            "type": ["array", "null"],
+            "type": [
+              "array",
+              "null"
+            ],
             "description": "The slides whose words change, or null.",
             "items": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["index", "fields"],
+              "required": [
+                "index",
+                "fields",
+                "image_key"
+              ],
               "properties": {
-                "index": {"type": "integer", "description": "0-based: slide 1 is index 0."},
+                "index": {
+                  "type": "integer",
+                  "description": "0-based: slide 1 is index 0."
+                },
                 "fields": {
                   "type": "object",
                   "additionalProperties": false,
                   "description": "Only the words that change, each one of the slide's editable words; an empty string drops an optional one.",
                   "properties": {
-                    "kicker": {"type": "string"},
-                    "kicker_sub": {"type": "string"},
-                    "headline": {"type": "string"},
-                    "headline_em": {"type": "string"},
-                    "sub": {"type": "string"},
-                    "body": {"type": "string"},
-                    "figure": {"type": "string"},
-                    "figure_sub": {"type": "string"},
-                    "note": {"type": "string"},
-                    "line1": {"type": "string"},
-                    "line2": {"type": "string"},
-                    "line": {"type": "string"},
-                    "text": {"type": "string"}
+                    "kicker": {
+                      "type": "string"
+                    },
+                    "kicker_sub": {
+                      "type": "string"
+                    },
+                    "headline": {
+                      "type": "string"
+                    },
+                    "headline_em": {
+                      "type": "string"
+                    },
+                    "sub": {
+                      "type": "string"
+                    },
+                    "body": {
+                      "type": "string"
+                    },
+                    "figure": {
+                      "type": "string"
+                    },
+                    "figure_sub": {
+                      "type": "string"
+                    },
+                    "note": {
+                      "type": "string"
+                    },
+                    "line1": {
+                      "type": "string"
+                    },
+                    "line2": {
+                      "type": "string"
+                    },
+                    "line": {
+                      "type": "string"
+                    },
+                    "text": {
+                      "type": "string"
+                    }
                   }
+                },
+                "image_key": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "A supplied brand image key, only when replacing this slide image was requested; null otherwise."
                 }
               }
             }
           }
         }
       }
+    },
+    "refresh_theme": {
+      "type": "boolean",
+      "description": "Rerender all supported slides with the current account theme when explicitly asked to update branding or logo."
+    },
+    "unresolved": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Specific requested changes you could not carry out."
     }
   }
 }

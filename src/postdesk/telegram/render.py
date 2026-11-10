@@ -344,7 +344,7 @@ def on_hold(session: Session, card: Card, reason: str | None, *, buttons: bool =
     review = card.review or {}
     current_reason = reason or card.stuck_reason or ""
     review_reason = str(review.get("why") or "")
-    image_updated = current_reason == transitions.IMAGE_EDIT_HOLD
+    image_updated = current_reason in (transitions.IMAGE_EDIT_HOLD, transitions.REVISION_HOLD)
     # A later job failure can leave an older editor verdict on the card.
     # Never present that verdict as the reason for the new hold.
     if (not image_updated and drafts_ and review.get("column") == "On hold" and review_reason and current_reason
@@ -358,11 +358,18 @@ def on_hold(session: Session, card: Card, reason: str | None, *, buttons: bool =
     out: list[Out] = []
     blocks = [f"<b>Needs your review: {esc(card.title)}</b>"]
     if image_updated:
-        blocks.append("The image was updated. The editor's previous notes may no longer match these images; "
+        from postdesk.board import cards
+        thread = cards.thread(session, card)
+        last_comment = thread[-1] if thread else None
+        latest = (last_comment.body_md if last_comment and last_comment.author == "maker"
+                  and last_comment.body_md.startswith("Revised:") else None)
+        if latest:
+            blocks.extend(md_blocks(latest))
+        blocks.append("The draft was updated. The editor's previous notes may no longer match; "
                       "check the current slides and alt text, or send them to the editor again.")
-    if review.get("summary"):
+    if review.get("summary") and not image_updated:
         blocks += md_blocks(str(review["summary"]))
-    for note in review.get("notes") or []:
+    for note in ([] if image_updated else review.get("notes") or []):
         label = str(note.get("target") or "post").replace("_", " ")
         if note.get("slide"):
             label += f" · slide {note['slide']}"

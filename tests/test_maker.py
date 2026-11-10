@@ -559,3 +559,39 @@ def test_doctor_checks_the_renderer(monkeypatch):
     monkeypatch.setattr(config.theme, "name", "mine")
     c = doctor.check_renderer(_renderer())
     assert not c.ok and "'mine' is not among them" in c.detail
+
+
+def test_replace_picture_rerenders_only_selected_slide(session):
+    from postdesk import storage
+    post, _ = maker.make(session, _facts(), "article", call=_fake_call(), renderer=_renderer(), now=NOW)
+    image = storage.store_asset(session, data=_jpeg((200, 200), "new picture"), filename="chosen.jpg",
+                                content_type="image/jpeg", uploaded_by="admin")
+    before = [s["asset_id"] for s in post.slides]
+    rendered = []
+    post = maker.revise(session, post.id, images=[{"index": 0, "asset_id": str(image.id)}],
+                        renderer=_renderer(rendered))
+    assert len(rendered) == 1 and rendered[0]["image"]["url"].startswith("data:image/jpeg;base64,")
+    assert post.slides[0]["spec"]["image"]["asset_id"] == str(image.id)
+    assert post.slides[0]["asset_id"] != before[0]
+    assert [s["asset_id"] for s in post.slides[1:]] == before[1:]
+
+
+def test_web_image_picker_updates_draft_and_rejects_stale_selection(session, admin, monkeypatch):
+    from postdesk import storage
+    post, _ = maker.make(session, _facts(), "article", call=_fake_call(), renderer=_renderer(), now=NOW)
+    monkeypatch.setattr(make_mod, "Renderer", lambda *a, **k: _renderer())
+    original = post.slides[0]["asset_id"]
+    image = storage.store_asset(session, data=_jpeg((200, 200), "web choice"), filename="web.jpg",
+                                content_type="image/jpeg", uploaded_by="admin")
+    got = admin.get(f"/api/posts/{post.id}").json()
+    assert got["slides"][0]["can_replace_image"]
+    r = admin.post(f"/api/posts/{post.id}/slides/0/image",
+                   json={"expected_asset_id": original, "asset_id": str(image.id)})
+    assert r.status_code == 200, r.text
+    updated = r.json()
+    assert updated["slides"][0]["asset_id"] != original
+    assert updated["slides"][0]["spec"]["image"]["asset_id"] == str(image.id)
+    assert updated["slides"][1]["asset_id"] == post.slides[1]["asset_id"]
+    stale = admin.post(f"/api/posts/{post.id}/slides/0/image",
+                       json={"expected_asset_id": original, "asset_id": str(image.id)})
+    assert stale.status_code == 409

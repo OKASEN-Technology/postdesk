@@ -33,6 +33,8 @@ TOTAL_COUNT_HEADER = "X-Total-Count"
 
 
 def item(post: SocialPost) -> PostItem:
+    from postdesk.telegram.commands import image_field
+
     return PostItem(
         id=str(post.id),
         channel=post.channel,
@@ -41,7 +43,8 @@ def item(post: SocialPost) -> PostItem:
         title=post.title,
         caption=post.caption,
         slides=[Slide(asset_id=s["asset_id"], alt_text=s.get("alt_text", ""), url=asset_url(s["asset_id"]),
-                      spec=s.get("spec"), words=maker.slide_words(s.get("spec")))
+                      spec=s.get("spec"), words=maker.slide_words(s.get("spec")),
+                      can_replace_image=bool(image_field(s)))
                 for s in post.slides],
         card_id=str(post.card_id) if post.card_id else None,
         source_ref=post.source_ref,
@@ -172,6 +175,49 @@ def update_post(post_id: uuid.UUID, body: PostUpdate, actor: str = Depends(requi
         return _run(maker.revise, session, post_id, title=body.title, caption=body.caption, alt_texts=body.alt_texts,
                     slides=[p.model_dump() for p in body.slides], by=actor)
     return _run(queue.update_post, session, post_id, title=body.title, caption=body.caption, alt_texts=body.alt_texts)
+
+
+@router.post("/{post_id}/slides/{index}/image", response_model=PostItem)
+def replace_slide_image(post_id: uuid.UUID, index: int, body: dict, actor: str = Depends(require_auth),
+                        session: Session = Depends(get_session)) -> PostItem:
+    """Replace a rendered slide picture while retaining the design and its other content."""
+    from postdesk import brand_library, storage
+    from postdesk.board import cards, transitions
+    from postdesk.db.models import Card
+    post = session.get(SocialPost, post_id)
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found.")
+    if post.status != "draft" or not 0 <= index < len(post.slides):
+        raise HTTPException(status_code=409, detail="This slide is no longer an editable draft.")
+    if body.get("expected_asset_id") != post.slides[index].get("asset_id"):
+        raise HTTPException(status_code=409, detail="This slide changed. Reload it before choosing an image.")
+    if post.card_id:
+        card = session.get(Card, post.card_id)
+        if card and card.column not in ("On hold", "Awaiting approval"):
+            raise HTTPException(status_code=409,
+                                detail="Wait for the current work to finish before editing this image.")
+    asset_id = body.get("asset_id")
+    if body.get("brand_key"):
+        try:
+            brand_item = next(x for x in brand_library.available(session) if x["key"] == body["brand_key"]
+                              and x["enabled"] and x["type"] == "image")
+            from postdesk.telegram.commands import brand_image_bytes
+            jpeg, _ = ig.to_jpeg_bytes(brand_image_bytes(session, brand_item))
+            asset = storage.store_asset(session, data=jpeg, filename="brand-image.jpg", content_type="image/jpeg",
+                                        uploaded_by=actor, provenance={"source": "Brand library"})
+            asset_id = str(asset.id)
+        except Exception as exc:
+            raise HTTPException(status_code=422, detail="That brand image is unavailable. Choose another.") from exc
+    if not asset_id:
+        raise HTTPException(status_code=422, detail="Choose an image first.")
+    try:
+        result = maker.revise(session, post_id, images=[{"index": index, "asset_id": asset_id}], by=actor)
+    except (queue.QueueError, ValueError, maker.MakerError, maker.RenderError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if post.card_id and card:
+        cards.comment(session, card, "user", f"Changed image on slide {index + 1}. Review the image and alt text.")
+        transitions.hold(session, card, actor=actor, note=transitions.IMAGE_EDIT_HOLD)
+    return item(result)
 
 
 def _then_board(result: PostItem, session: Session, actor: str) -> PostItem:
