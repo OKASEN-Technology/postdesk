@@ -26,4 +26,8 @@ if [ -n "$migrate" ] && [ "${POSTDESK_SKIP_MIGRATE:-}" != "1" ]; then
   done
 fi
 
+if [ "$1 $2" = "postdesk serve" ] && [ "${POSTDESK_BUNDLED_RENDERER:-0}" = "1" ]; then
+  exec python /supervise.py "$@"
+fi
+
 exec "$@"

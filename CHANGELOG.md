@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Run the renderer alongside the web app in the app container, bound to localhost, so both wake together. The two processes are supervised together; cron and the existing separate-renderer Compose setup keep their previous behavior. The shared service must be checked against its memory limit under real rendering load.
 - Keep Telegram image changes on the current draft for review and further edits, instead of automatically starting another maker cycle. Let the owner accept held drafts in the website as well as Telegram, and prevent brief approval from remaking an existing held draft.
 - Acknowledge Telegram buttons before image previews or rendering, and show progress while images load or slides update. Expired acknowledgements no longer discard an action.
 - Let paired Telegram users choose a draft slide, browse enabled brand images or upload a photo, and send the re-rendered draft back to the editor without scheduling it.
