@@ -26,6 +26,7 @@ services:
       DATABASE_URL: postgresql+psycopg://postdesk:postdesk@db:5432/postdesk
       POSTDESK_DATA_DIR: /data
       POSTDESK_CONFIG: /app/postdesk.toml
+      POSTDESK_BUNDLED_RENDERER: 0
       RENDERER_URL: http://renderer:3100
       RENDERER_TOKEN: ${RENDERER_TOKEN:-change-me}
     volumes:

@@ -88,6 +88,25 @@ jobs:
       - run: docker build -f docker/Dockerfile.renderer -t postdesk-renderer:ci .
       # The entrypoint only waits for a database before `serve` and `cron`.
       - run: docker run --rm postdesk:ci postdesk version
+      # Both processes share one container; verify the bundled renderer can
+      # start and render a real slide through the private loopback interface.
+      - run: |
+          docker run -d --name bundled-smoke --entrypoint python postdesk:ci /supervise.py sleep 60
+          trap 'docker rm -f bundled-smoke >/dev/null' EXIT
+          docker exec bundled-smoke python -c '
+          import time, urllib.request
+          for attempt in range(40):
+              try:
+                  urllib.request.urlopen("http://127.0.0.1:3100/health", timeout=2)
+                  break
+              except OSError:
+                  time.sleep(.25)
+          else:
+              raise SystemExit("renderer did not start")
+          data = open("/app/examples/slide.json", "rb").read()
+          req = urllib.request.Request("http://127.0.0.1:3100/render", data=data, headers={"Content-Type": "application/json"})
+          assert urllib.request.urlopen(req, timeout=30).read(2) == bytes.fromhex("ffd8")
+          '
       # Without a database, `serve` must give up with a clear message, not hang.
       - run: |
           set +e
