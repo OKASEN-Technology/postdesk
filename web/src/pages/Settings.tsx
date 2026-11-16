@@ -44,6 +44,7 @@ export default function Settings({ onChange }: { config: Config; onChange?: () =
           <Voice {...props} />
           <BrandLibraryPanel />
           <Images {...props} />
+          <Research {...props} />
           <Sources {...props} />
         </div>
       </div>
@@ -355,6 +356,27 @@ function Account({ data, save }: SectionProps) {
       </Field>
     </Panel>
   );
+}
+
+function Research({ data, save }: SectionProps) {
+  const [r, setR] = useState(data.values.research);
+  const [topics, setTopics] = useState(r.topics.join("\n"));
+  const [domains, setDomains] = useState(r.preferred_domains.join("\n"));
+  const lines = (s: string) => s.split("\n").map((x) => x.trim()).filter(Boolean);
+  return <Panel title="Daily brief research" section="research" data={data} save={save}
+    patch={() => ({ ...r, topics: lines(topics), preferred_domains: lines(domains) })}
+    note="Partner researches these topics as part of the daily brief. Sources are leads for review; publishing still requires approval.">
+    <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={r.enabled} onChange={(e) => setR({ ...r, enabled: e.target.checked })} /> Research daily ideas</label>
+    <Field label="Topics" hint="One topic per line. Topics rotate across days."><textarea className={INPUT} rows={4} value={topics} onChange={(e) => setTopics(e.target.value)} /></Field>
+    <Field label="Preferred source domain" hint="Optional. One domain per line; searches rotate across these sites."><textarea className={INPUT} rows={2} value={domains} onChange={(e) => setDomains(e.target.value)} /></Field>
+    <div className="grid grid-cols-2 gap-3">
+      <Field label="Freshness (days)"><input type="number" min={1} max={365} className={INPUT} value={r.freshness_days} onChange={(e) => setR({ ...r, freshness_days: Number(e.target.value) })} /></Field>
+      <Field label="Searches per brief"><input type="number" min={1} max={5} className={INPUT} value={r.max_searches} onChange={(e) => setR({ ...r, max_searches: Number(e.target.value) })} /></Field>
+      <Field label="Results per search"><input type="number" min={1} max={10} className={INPUT} value={r.results_per_search} onChange={(e) => setR({ ...r, results_per_search: Number(e.target.value) })} /></Field>
+      <Field label="Pages to read"><input type="number" min={0} max={5} className={INPUT} value={r.max_reads} onChange={(e) => setR({ ...r, max_reads: Number(e.target.value) })} /></Field>
+    </div>
+    <p className="text-xs text-ink-2">Research uses a public search service with usage limits. Partner model costs count toward the existing monthly AI spending limit.</p>
+  </Panel>;
 }
 
 function Schedule({ data, save }: SectionProps) {

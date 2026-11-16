@@ -240,6 +240,34 @@ class Partner(BaseModel):
     max_searches: int = Field(5, ge=1)
 
 
+class Research(BaseModel):
+    """Daily brief research limits; no separate worker or paid search key."""
+
+    enabled: bool = True
+    topics: list[str] = ["physical AI robotics", "industrial safety wearable technology",
+                         "computer vision and edge AI", "workforce safety research"]
+    preferred_domains: list[str] = []
+    freshness_days: int = Field(30, ge=1, le=365)
+    max_searches: int = Field(3, ge=1, le=5)
+    results_per_search: int = Field(5, ge=1, le=10)
+    max_reads: int = Field(3, ge=0, le=5)
+
+    @field_validator("topics", "preferred_domains")
+    @classmethod
+    def _bounded_list(cls, values: list[str]) -> list[str]:
+        if len(values) > 30 or any(not v.strip() or len(v) > 160 or "\n" in v for v in values):
+            raise ValueError("Use up to 30 non-empty entries, each under 160 characters")
+        return [v.strip() for v in values]
+
+    @field_validator("preferred_domains")
+    @classmethod
+    def _domains(cls, values: list[str]) -> list[str]:
+        import re
+        if any(not re.fullmatch(r"[A-Za-z0-9.-]+", v) or "." not in v for v in values):
+            raise ValueError("Use domain names such as example.com, without URLs")
+        return values
+
+
 class Model(BaseModel):
     model: str = "claude-sonnet-5-5"
     effort: str = "medium"
@@ -291,6 +319,7 @@ class Config(BaseModel):
     sources: dict[str, dict] = {}
     scout: Scout = Scout()
     partner: Partner = Partner()
+    research: Research = Research()
     images: Images = Images()
     review: Review = Review()
     llm: LLM = LLM()
@@ -346,6 +375,8 @@ EDITABLE: dict[str, tuple[str, ...] | None] = {
     "voice": ("text", "brand_assets_url", "hashtags", "max_hashtags", "retired_phrases"),
     "theme": ("name",),
     "sources": None,
+    "research": ("enabled", "topics", "preferred_domains", "freshness_days", "max_searches",
+                 "results_per_search", "max_reads"),
     "images": ("sources",),
     "llm": ("partner", "editor", "maker", "pick", "monthly_usd"),
     "telegram": ("digest_at",),

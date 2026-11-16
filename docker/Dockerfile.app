@@ -24,7 +24,7 @@ COPY src/ ./src/
 COPY --from=web /src/postdesk/static/ ./src/postdesk/static/
 COPY --from=renderer /usr/local/bin/node /usr/local/bin/node
 COPY --from=renderer /renderer /renderer
-RUN pip install ".[s3]"
+RUN pip install ".[s3]" "agent-reach @ https://github.com/Panniantong/Agent-Reach/archive/c70ae6da5d39bc90e09ad2ae0575ccc89f31e284.tar.gz"
 # The examples, so `postdesk init` can start from them inside the container.
 COPY .env.example examples/ ./examples/
 COPY docker/entrypoint.sh /entrypoint.sh

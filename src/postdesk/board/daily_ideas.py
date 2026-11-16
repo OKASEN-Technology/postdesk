@@ -13,9 +13,9 @@ from postdesk.config import config, settings
 from postdesk.db.models import Card, Job, Notice
 
 REASON = (
-    "Suggest one original social media post idea for this account and its audience. "
+    "Suggest original social media post ideas for this account and its audience. "
     "Use the account's saved voice and verified company context; choose an angle different from recent posts. "
-    "Provide a concise hook, the core idea and a practical visual direction. "
+    "Provide a concise hook, the core idea and a practical visual direction for each. "
     "Do not invent product capabilities, launch status, customer claims or statistics. "
     "This is a suggestion for human review, not permission to publish."
 )
