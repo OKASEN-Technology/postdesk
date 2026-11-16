@@ -95,6 +95,7 @@ export interface SettingsValues {
   voice: { text: string | null; brand_assets_url: string | null; hashtags: string[]; max_hashtags: number; retired_phrases: string[]; file: string; from_file: boolean };
   theme: { name: string };
   sources: Record<string, Record<string, unknown>>;
+  research: { enabled: boolean; topics: string[]; preferred_domains: string[]; freshness_days: number; max_searches: number; results_per_search: number; max_reads: number };
   images: { sources: string[] };
   llm: { partner: ModelChoice; editor: ModelChoice; maker: ModelChoice; pick: ModelChoice; monthly_usd: number };
   telegram: { digest_at: string; mode: string };

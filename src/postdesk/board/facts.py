@@ -56,7 +56,8 @@ def stray_numbers(text: str, known: set[str]) -> list[str]:
 
     from postdesk.maker.words import _figure_ok
 
-    t = re.sub(r"(?im)^\s*\d{1,2}[.)]\s", " ", text or "")
+    t = re.sub(r"https?://[^\s)<>]+", " ", text or "")
+    t = re.sub(r"(?im)^\s*\d{1,2}[.)]\s", " ", t)
     t = re.sub(r"(?i)\b(slides?|frames?|slots?|round|step|no\.)\s*\d{1,2}(\s*(-|–|to|and)\s*\d{1,2})?\b", " ", t)
     t = re.sub(r"(?i)\b\d{1,2}\s*(slides?|frames?|lines?|sentences?|words?|hashtags?|paragraphs?|characters?)\b",
                " ", t)

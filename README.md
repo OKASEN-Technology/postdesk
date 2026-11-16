@@ -388,3 +388,14 @@ saved account context and sends the brief to the paired Telegram chat. The
 existing approval steps still apply. The cron checks on its normal schedule,
 so delivery may be later than 08:00; if the agents are paused or the spending
 limit is reached, the idea waits. This feature is disabled by default.
+
+With daily ideas enabled, Partner researches rotating topics in the same job using
+Agent Reach's public web search and page reader. Configure topics, optional source
+domains, freshness and request limits under Settings → Daily brief research. The
+container installs the pinned tool; other installations must install Agent Reach
+separately. Search excerpts and pages are unverified leads, not proof. The card
+keeps the sources and stays Planned for your choice; check the original sources
+and claims before approving a post. Missing publication dates are marked unknown.
+If the provider is unavailable, ask Partner to “retry research”. Web searches
+are subject to the provider's availability and limits; model usage remains part
+of Postdesk's existing monthly AI budget. No separate worker is started.
