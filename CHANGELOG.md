@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Allow Partner follow-up searches on domains from a Daily Brief's stored research leads, including existing briefs, so it can check selected sources. Search remains limited to source domains and respects the existing search switch. Validation and deployment pending.
 - Add bounded Agent Reach web research to the existing daily Partner job, with configurable topics and limits. Source leads stay on the card for human verification and approval; no new worker or automatic publishing. Deployment pending.
 
 - Run the renderer alongside the web app in the app container, bound to localhost, so both wake together. The two processes are supervised together; cron and the existing separate-renderer Compose setup keep their previous behavior. The shared service must be checked against its memory limit under real rendering load.

@@ -50,6 +50,18 @@ def allowed_domains(card: Card) -> list[str]:
     out = set(card.plan.get("domains") or [])
     if card.facts and card.facts.get("url"):
         out.add(domain(card.facts["url"]))
+    # Daily research has multiple citations and no single facts.url. Reuse the
+    # stored leads so follow-up turns, including existing cards, can check them.
+    if card.created_by == "daily-ideas" and (card.source_ref or "").startswith("daily-idea:"):
+        from postdesk.agents.partner.research import _public_url
+
+        research = card.plan.get("daily_research") or {}
+        if isinstance(research, dict) and research.get("status") == "ok":
+            items = research.get("items")
+            for item in items[:20] if isinstance(items, list) else []:
+                url = _public_url(item.get("url")) if isinstance(item, dict) else None
+                if url:
+                    out.add(domain(url))
     out |= set(config.partner.allowed_domains)
     return sorted(d for d in out if d)
 
