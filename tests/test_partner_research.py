@@ -82,3 +82,20 @@ def test_url_digits_do_not_trigger_number_guard():
     from postdesk.agents.partner import check_brief
     assert check_brief({'brief': 'Source: https://example.com/report/2026', 'guidance': ''}, set()) == []
     assert check_brief({'brief': 'The report covers 2026 workers.', 'guidance': ''}, set())
+
+
+def test_existing_daily_research_sources_enable_partner_search(session, monkeypatch):
+    from postdesk.agents.partner import context
+    from postdesk.board import cards
+
+    monkeypatch.setattr(config.partner, 'allowed_domains', [])
+    monkeypatch.setattr(config.partner, 'web_search', True)
+    card = cards.file_card(session, title='Daily idea', created_by='daily-ideas', column='Planned',
+                           source_ref='daily-idea:2026-11-17', fingerprint='daily-idea:2026-11-17')
+    card.plan = {'daily_research': {'status': 'ok', 'items': [
+        {'url': 'https://www.example.com/report'}, {'url': 'https://other.example/article'},
+        {'url': 'javascript://invalid.example'}, {'url': 'https://user:pass@invalid.example'}, {}]}}
+    assert context.allowed_domains(card) == ['example.com', 'other.example']
+    assert context.tools(card)[0]['allowed_domains'] == ['example.com', 'other.example']
+    monkeypatch.setattr(config.partner, 'web_search', False)
+    assert context.tools(card) is None
