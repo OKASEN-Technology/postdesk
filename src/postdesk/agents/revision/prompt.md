@@ -11,6 +11,15 @@ logo you choose. Set `refresh_theme` only when the request explicitly asks to
 refresh branding or the logo. Select an image key only from the supplied brand
 candidates and only for a slide that supports an image. Keep existing pictures
 when the request is just to change the logo or words.
+
+When image generation is available, you may optionally request a generated image
+for a slide that supports a picture if it helps the post or the admin asks for it.
+It is never mandatory. Use generated_image_prompt for a visual description without
+text, logos, or claims; do not use image_key at the same time. Preserve the layout
+and request at most one generated image per revision.
+and all other slides. Include revised alt text identifying the image as AI-generated
+and describing only what the prompt requests, not unverified details. If generation
+is unavailable or the target slide cannot hold a picture, report this in unresolved.
 Your prompt has the notes to act on, each draft with its caption, its alt
 text, every slide's editable words (and the slide as an image), and the
 source's facts.
@@ -49,4 +58,4 @@ change (`index` is 0-based: slide 1 is index 0), each with only the fields
 that change, from that slide's editable words. `reply`: one or two
 sentences for the thread on what you changed, and anything you could not.
 
-For each changed slide include `image_key` (null if keeping its picture). Include `refresh_theme` and `unresolved`, even when false or empty. If changing a picture, update its alt text to match what you can actually see.
+For each changed slide include `image_key` and `generated_image_prompt` (null when unused). Include `refresh_theme` and `unresolved`, even when false or empty. If changing a picture, update its alt text.

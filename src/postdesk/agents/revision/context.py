@@ -50,6 +50,9 @@ def user_content(session: Session, card: Card, drafts: list[SocialPost], payload
         f"Approved revised brief: {card.brief_md or '(none)'}\nGuidance: {card.guidance or '(none)'}",
         "The drafts follow.",
     ]
+    from postdesk.config import settings
+    enabled = bool(settings.image_generation_enabled and settings.openai_api_key)
+    head.append(f"AI image generation available: {enabled}")
     blocks: list[dict] = [{"type": "text", "text": "\n".join(head)}]
     for p in drafts:
         cap = "(a Story: no caption)" if p.kind == "story" else (p.caption or "(empty)")

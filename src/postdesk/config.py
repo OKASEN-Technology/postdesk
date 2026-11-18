@@ -39,6 +39,8 @@ class Settings(BaseSettings):
 
     anthropic_api_key: str | None = None
     openai_api_key: str | None = None
+    image_generation_enabled: bool = False
+    image_generation_model: str = "gpt-image-1"
     telegram_bot_token: str | None = None
 
     meta_app_id: str | None = None

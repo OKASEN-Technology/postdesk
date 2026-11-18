@@ -57,7 +57,8 @@
               "required": [
                 "index",
                 "fields",
-                "image_key"
+                "image_key",
+                "generated_image_prompt"
               ],
               "properties": {
                 "index": {
@@ -116,6 +117,10 @@
                     "null"
                   ],
                   "description": "A supplied brand image key, only when replacing this slide image was requested; null otherwise."
+                },
+                "generated_image_prompt": {
+                  "type": ["string", "null"],
+                  "description": "Optional image description for this slide, only when a generated image is appropriate or requested. No embedded text, logos, or factual assertions. Null means no generation."
                 }
               }
             }

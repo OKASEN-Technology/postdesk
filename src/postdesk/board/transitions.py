@@ -453,6 +453,7 @@ def valid_revision(d: dict, drafts: list[SocialPost]) -> tuple[list[dict], list[
             i = s.get("index")
             fields = {k: v for k, v in (s.get("fields") or {}).items() if v is not None}
             image_key = s.get("image_key")
+            generated_prompt = (s.get("generated_image_prompt") or "").strip()
             if not isinstance(i, int) or not 0 <= i < len(p.slides):
                 problems.append(f"{p.id}: slide index {i} is out of range (0–{len(p.slides) - 1})")
                 continue
@@ -461,13 +462,16 @@ def valid_revision(d: dict, drafts: list[SocialPost]) -> tuple[list[dict], list[
             bad = [f for f in fields if f not in editable]
             if not spec:
                 problems.append(f"{p.id}: slide {i + 1} was uploaded, not made; its words cannot change")
-            elif not fields and not image_key:
+            elif image_key and generated_prompt:
+                problems.append(f"{p.id}: slide {i + 1} has two image sources")
+            elif not fields and not image_key and not generated_prompt:
                 problems.append(f"{p.id}: slide {i + 1} has no change")
             elif bad:
                 problems.append(f"{p.id}: slide {i + 1} can't change {', '.join(bad)} "
                                 f"(its words are {', '.join(editable)})")
             else:
-                slides.append({"index": i, "fields": fields, "image_key": image_key})
+                slides.append({"index": i, "fields": fields, "image_key": image_key,
+                               "generated_image_prompt": generated_prompt})
         if slides:
             patch["slides"] = slides
         if patch:
@@ -492,12 +496,46 @@ def revise(session: Session, card: Card, d: dict, *, renderer=None, candidates=N
 
     candidates = {c["key"]: c for c in (candidates or [])}
     unresolved = list(d.get("unresolved") or [])
+    generated_count = 0
     for patch in patches:
         words, pictures = [], []
+        generation_failed = False
         for slide in patch.pop("slides", []):
             key = slide.get("image_key")
+            prompt = slide.get("generated_image_prompt")
             if slide.get("fields"):
                 words.append({"index": slide["index"], "fields": slide["fields"]})
+            if prompt:
+                from postdesk.config import settings
+                from postdesk.telegram.commands import image_field
+                draft = next(x for x in drafts if str(x.id) == patch["id"])
+                i = slide["index"]
+                if not image_field(draft.slides[i]):
+                    unresolved.append(f"Slide {i + 1}: this layout does not support an image.")
+                    generation_failed = True
+                elif not patch.get("alt_texts") or "ai" not in patch["alt_texts"][i].lower():
+                    unresolved.append(f"Slide {i + 1}: AI image needs updated alt text identifying it as AI-generated.")
+                    generation_failed = True
+                elif not settings.image_generation_enabled or not settings.openai_api_key:
+                    unresolved.append(f"Slide {i + 1}: image generation is not configured.")
+                    generation_failed = True
+                elif generated_count >= 1:
+                    unresolved.append(f"Slide {i + 1}: only one image can be generated per revision.")
+                    generation_failed = True
+                else:
+                    generated_count += 1
+                    try:
+                        from postdesk.images.generated import generate
+                        data = generate(prompt)
+                        jpeg, _ = instagram.to_jpeg_bytes(data)
+                        asset = storage.store_asset(session, data=jpeg, filename="generated-revision.jpg",
+                                                    content_type="image/jpeg", uploaded_by=MAKER,
+                                                    provenance={"source": "AI-generated", "generated": True,
+                                                                "model": settings.image_generation_model})
+                        pictures.append({"index": i, "asset_id": str(asset.id), "credit": "AI-generated"})
+                    except Exception:
+                        unresolved.append(f"Slide {i + 1}: image generation failed; the picture was not changed.")
+                        generation_failed = True
             if key:
                 if key not in candidates:
                     unresolved.append(f"Slide {slide['index'] + 1}: the selected picture is not available.")
@@ -519,6 +557,8 @@ def revise(session: Session, card: Card, d: dict, *, renderer=None, candidates=N
             patch["slides"] = words
         if pictures:
             patch["images"] = pictures
+        if generation_failed:
+            patch.pop("alt_texts", None)
     patches = [p for p in patches if len(p) > 1]
     if d.get("refresh_theme"):
         for draft in drafts:
@@ -553,7 +593,8 @@ def revise(session: Session, card: Card, d: dict, *, renderer=None, candidates=N
     session.refresh(card)
     if not applied:
         return stuck(session, card, "the revision was refused: " + "; ".join(problems), actor=MAKER)
-    text = f"Revised: {(d.get('reply') or '').strip()}"
+    text = ("Revision partially applied; see details below." if problems or unresolved
+            else f"Revised: {(d.get('reply') or '').strip()}")
     if problems or unresolved:
         text += "\n\nNot applied: " + "; ".join(problems + unresolved)
     cards.comment(session, card, MAKER, text[:4000], commit=False)

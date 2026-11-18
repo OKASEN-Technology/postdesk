@@ -248,3 +248,31 @@ def test_revision_uses_requested_brand_picture_on_the_existing_slide(session, mo
     assert feed.slides[0]["asset_id"] != old_ids[0]
     assert [s["asset_id"] for s in feed.slides[1:]] == old_ids[1:]
     assert len(rendered) == 1 and rendered[0]["image"]["url"].startswith("data:image/jpeg;base64,")
+
+
+def test_generated_revision_only_rerenders_target_slide(session, monkeypatch):
+    from postdesk.config import settings
+    from postdesk.images import generated
+    from tests.test_maker import _jpeg
+
+    c = _in_review(session)
+    feed = next(p for p in posts.drafts(session, c.id) if p.kind == "carousel")
+    before = [s["asset_id"] for s in feed.slides]
+    monkeypatch.setattr(settings, "image_generation_enabled", True)
+    monkeypatch.setattr(settings, "openai_api_key", "test")
+    monkeypatch.setattr(generated, "generate", lambda prompt: _jpeg((200, 200), "generated"))
+    transitions.rethink(session, c, actor="admin", note="Generate a picture on slide 1.")
+    alt = ["AI-generated illustration of a forest"] + [s.get("alt_text") or "Slide" for s in feed.slides[1:]]
+    reply = {"reply": "Added an AI-generated image.", "refresh_theme": False, "unresolved": [],
+             "posts": [{"id": str(feed.id), "caption": None, "alt_texts": alt,
+                        "slides": [{"index": 0, "fields": {}, "image_key": None,
+                                    "generated_image_prompt": "A forest"}]}]}
+    rendered = []
+    revision.turn(session, c, {"note": "Generate a picture on slide 1.", "from": "user"},
+                  call=kit.scripted(reply), renderer=kit._renderer(rendered))
+    session.refresh(feed)
+    assert feed.slides[0]["asset_id"] != before[0]
+    assert [s["asset_id"] for s in feed.slides[1:]] == before[1:]
+    assert len(rendered) == 1
+    assert feed.slides[0]["alt_text"] == alt[0]
+    assert c.column == "On hold"

@@ -192,3 +192,6 @@
 ### Earlier
 
 - Repository created: README, licence, contributing and security notes, the vendor-neutral check, a CLI stub.
+
+### Optional generated slide images (pending deployment)
+- Revision requests can optionally generate an image for an existing supported slide while preserving its layout and other slides. Generation is disabled by default and uses the configured OpenAI key; generated assets record their origin and require updated alt text. Unsupported layouts and provider failures are reported for review.
